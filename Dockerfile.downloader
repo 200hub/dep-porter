@@ -1,39 +1,78 @@
-FROM ubuntu:24.04
+# =============================================================================
+# dep-downloader — multi-stage build
+# Builder: ubuntu:24.04 (full toolchain). Final: debian:bookworm-slim (~200 MB base).
+# =============================================================================
+
+# ── Stage 1: Builder ─────────────────────────────────────────────────────────
+FROM ubuntu:24.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
-
-# ── Base tools ────────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget git unzip ca-certificates gnupg \
-    build-essential pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-# ── Java / Maven ─────────────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    openjdk-17-jdk-headless maven \
-    && rm -rf /var/lib/apt/lists/*
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="/root/.cargo/bin:${PATH}"
 
-# ── Node.js / npm ────────────────────────────────────────────────────
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+# System + Java/Node/Python in a single layer to maximise cache reuse
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg \
+        openjdk-17-jre-headless maven \
+        python3 python3-pip python3-venv python3-minimal \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Python / pip / twine ─────────────────────────────────────────────
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv \
-    && rm -rf /var/lib/apt/lists/*
-RUN pip3 install --break-system-packages twine
+# Python packages (twine + conan)
+RUN pip3 install --break-system-packages --no-cache-dir twine conan
 
-# ── Rust / Cargo ─────────────────────────────────────────────────────
+# Rust toolchain (minimal)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal
-ENV PATH="/root/.cargo/bin:${PATH}"
 
-# ── Conan (C++ package manager) ──────────────────────────────────────
-RUN pip3 install --break-system-packages conan
+# Aggressive cleanup — removes docs, caches, build artifacts
+RUN rm -rf /usr/share/doc /usr/share/man /usr/share/info \
+    && rm -rf /root/.cache/pip \
+    && rm -rf /root/.cargo/registry /root/.cargo/git \
+    && rm -rf /root/.rustup/toolchains/*/share \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && find /usr/lib/jvm -name "*.zip" -delete 2>/dev/null || true
 
-# ── Download script ──────────────────────────────────────────────────
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────────
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV PATH="/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PYTHONPATH="/usr/local/lib/python3.11/dist-packages:${PYTHONPATH:-}"
+
+# Runtime-only deps (no gcc, no headers)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git unzip \
+        bash coreutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy toolchains from builder
+COPY --from=builder /usr/lib/jvm                /usr/lib/jvm
+COPY --from=builder /usr/share/maven            /usr/share/maven
+COPY --from=builder /usr/bin/mvn                /usr/bin/mvn
+COPY --from=builder /usr/bin/java               /usr/bin/java
+COPY --from=builder /usr/local/bin/node         /usr/local/bin/node
+COPY --from=builder /usr/local/bin/npm          /usr/local/bin/npm
+COPY --from=builder /usr/local/bin/npx          /usr/local/bin/npx
+COPY --from=builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=builder /usr/local/bin/python3      /usr/local/bin/python3
+COPY --from=builder /usr/local/bin/pip3         /usr/local/bin/pip3
+COPY --from=builder /usr/local/bin/twine        /usr/local/bin/twine
+COPY --from=builder /usr/local/bin/conan        /usr/local/bin/conan
+COPY --from=builder /usr/local/lib/python3*     /usr/local/lib/
+COPY --from=builder /usr/local/lib/python3.11/dist-packages /usr/local/lib/python3.11/dist-packages
+COPY --from=builder /usr/lib/python3            /usr/lib/python3
+COPY --from=builder /root/.cargo                /root/.cargo
+COPY --from=builder /root/.rustup               /root/.rustup
+
+# Shared libs that the copied binaries depend on
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libstdc++.so.6*   /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libgcc_s.so.1*    /usr/lib/x86_64-linux-gnu/
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libz.so.1*        /usr/lib/x86_64-linux-gnu/
+
+# Download script
 COPY scripts/download.sh /usr/local/bin/dep-download
 RUN chmod +x /usr/local/bin/dep-download
 

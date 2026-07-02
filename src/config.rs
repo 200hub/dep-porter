@@ -53,7 +53,7 @@ impl AppConfig {
     }
 
     /// Validate that required fields are non-empty.
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         if self.nexus.base_url.is_empty() {
             return Err(DepError::ConfigError(
                 "[nexus] base_url is empty".into(),
