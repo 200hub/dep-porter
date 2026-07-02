@@ -1,0 +1,10 @@
+[nexus]
+base_url = "http://nexus.example.com"
+username = "admin"
+password = "admin123"
+
+[repositories]
+maven = "maven-releases"
+npm = "npm-hosted"
+pypi = "pypi-hosted"
+raw = "raw-hosted"

@@ -1,0 +1,41 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── Base tools ────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git unzip ca-certificates gnupg \
+    build-essential pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Java / Maven ─────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk-headless maven \
+    && rm -rf /var/lib/apt/lists/*
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+
+# ── Node.js / npm ────────────────────────────────────────────────────
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python / pip / twine ─────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --break-system-packages twine
+
+# ── Rust / Cargo ─────────────────────────────────────────────────────
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# ── Conan (C++ package manager) ──────────────────────────────────────
+RUN pip3 install --break-system-packages conan
+
+# ── Download script ──────────────────────────────────────────────────
+COPY scripts/download.sh /usr/local/bin/dep-download
+RUN chmod +x /usr/local/bin/dep-download
+
+WORKDIR /workspace
+ENTRYPOINT ["dep-download"]
