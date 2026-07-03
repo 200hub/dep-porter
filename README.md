@@ -1,94 +1,98 @@
 # dep-porter
 
-A CLI tool to download dependencies from the internet and import them into an air-gapped (intranet) Nexus repository.
+内网 Nexus 离线依赖搬运工具。
 
-## Use Cases
+将 Maven、npm、PyPI、Cargo、Conan 依赖从外网下载，再导入内网 Nexus 仓库。
 
-- Your organization uses an internal Nexus repository that cannot access the public internet.
-- You need to transfer dependencies (Maven, npm, PyPI, Cargo, Conan) from a connected machine to a disconnected environment.
-- You want a repeatable, automated process for syncing dependencies across network boundaries.
+## 适用场景
 
-## Not Suitable For
+- 内网 Nexus 无法访问公网，需要人工搬运依赖
+- 需要批量下载依赖及其所有传递依赖
+- 需要可重复、可自动化的跨网依赖同步流程
 
-- Environments where Nexus is directly connected to the internet (use Nexus proxy repositories instead).
-- Real-time dependency resolution during builds (this is an offline batch tool).
-- Dependencies that require platform-specific native compilation during download.
+## 不适用场景
 
-## Supported Dependency Types
+- Nexus 可直接联网（应使用 Nexus 代理仓库）
+- 构建时实时解析依赖（本工具是离线批量工具）
+- 下载过程中需要平台特定原生编译的依赖
 
-| Kind  | Download | Import to Nexus | Notes |
-|-------|----------|-----------------|-------|
-| Maven | Yes      | Yes (Maven repo) | Full transitive dependency resolution via `mvn dependency:go-offline` |
-| npm   | Yes      | Yes (npm repo)   | Downloads tarballs; uploads to Nexus npm-hosted |
-| PyPI  | Yes      | Yes (PyPI repo)  | Uses `pip download` + `twine upload` |
-| Cargo | Yes      | Yes (raw repo)   | Uses `cargo vendor`; uploads to raw repository |
-| Conan | Yes      | Yes (raw repo)   | Uses `conan install`; uploads to raw repository |
+## 支持的依赖类型
 
-## Prerequisites
+| 类型 | 下载 | 导入 Nexus | 说明 |
+|------|------|-----------|------|
+| Maven | ✅ | Maven 仓库 | `mvn dependency:get` 递归下载 |
+| npm | ✅ | npm 仓库 | `npm install` 下载 + tarball 上传 |
+| PyPI | ✅ | PyPI 仓库 | `pip download` + `twine upload` |
+| Cargo | ✅ | cargo/raw 仓库 | `cargo vendor`，优先 cargo 仓库，失败降级 raw |
+| Conan | ✅ | raw 仓库 | `conan install` 缓存配方（Nexus 原生不支持，走 raw 兜底） |
 
-- **Rust** 1.70+ (for building the CLI)
-- **Docker** (for running the downloader container)
-- **twine** (optional, for PyPI import on the target machine: `pip install twine`)
+## 环境要求
 
-## Building
+| 工具 | 用途 | 阶段 |
+|------|------|------|
+| Rust 1.70+ | 编译 CLI | 开发 |
+| Docker | 运行下载器容器 | 外网下载 |
+| twine | PyPI 导入 | 内网导入（可选） |
 
-### Build the Rust CLI
+## 快速开始
+
+### 1. 编译 CLI
 
 ```bash
 cd dep-porter
 cargo build --release
 ```
 
-The binary will be at `target/release/dep-porter` (or `target\release\dep-porter.exe` on Windows).
+产物：`target/release/dep-porter`（Windows: `target\release\dep-porter.exe`）
 
-### Build the Docker Downloader Image
+### 2. 构建 Docker 下载器镜像
 
 ```bash
 docker build -f Dockerfile.downloader -t dep-downloader:latest .
 ```
 
-This creates an Ubuntu 24.04 image with all required tools pre-installed:
+镜像内置：OpenJDK 17 + Maven、Node.js 20 + npm、Python 3 + pip + twine、Rust + Cargo、Conan。
 
-- OpenJDK 17 + Maven
-- Node.js 20 + npm
-- Python 3 + pip + twine
-- Rust + Cargo
-- Conan
+> 首次构建需要下载约 500MB 依赖，之后利用 Docker 缓存会很快。镜像会自动使用阿里云 apt 镜像加速。
 
-## Usage
-
-### Phase 1: Download (on an internet-connected machine)
+### 3. 外网下载（联网机器）
 
 ```bash
-# Maven
+# Maven（正式版本）
 dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0
 
+# Maven（SNAPSHOT 快照版本）
+dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0-SNAPSHOT
+
 # npm
-dep-porter download --kind npm --name lodash --version 4.17.21
+dep-porter download --kind npm --name @h-ai/serv --version 0.1.0-alpha.31
 
 # PyPI
 dep-porter download --kind pypi --name requests --version 2.32.3
 
 # Cargo
-dep-porter download --kind cargo --name serde --version 1.0.203
+dep-porter download --kind cargo --name tardis --version 0.1.0-rc.19
 
 # Conan
 dep-porter download --kind conan --name zlib --version 1.2.13
+
+# 下载前检查安全漏洞（通过 OSV.dev 查询已知 CVE）
+dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --check-security
 ```
 
-Each command creates a directory named `{kind}_{safe_name}_{version}` containing all downloaded artifacts and their transitive dependencies.
+每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
 
-### Phase 2: Transfer
+### 4. 拷贝到内网
 
-Copy the following to your air-gapped machine:
+将以下内容拷贝到内网机器：
 
-1. The `dep-porter` binary (or source + `cargo build --release`)
-2. The download directories (e.g. `maven_org.apache.commons_commons-lang3_3.14.0/`)
-3. A `config.toml` file with your Nexus settings
+1. `dep-porter` 二进制文件（或源码 + `cargo build --release`）
+2. 下载目录（如 `maven_org.apache.commons_commons-lang3_3.14.0/`）
+3. `config.toml` 配置文件
 
-### Phase 3: Import (on the air-gapped machine)
+### 5. 内网导入
 
-Create a `config.toml`:
+创建 `config.toml`：
 
 ```toml
 [nexus]
@@ -98,86 +102,90 @@ password = "admin123"
 
 [repositories]
 maven = "maven-releases"
+# maven_snapshots = "maven-snapshots"   # 可选，不填则 SNAPSHOT 版本也发到 maven
 npm = "npm-hosted"
 pypi = "pypi-hosted"
+# cargo = "cargo-hosted"                # 可选，不填则走 raw 兜底
 raw = "raw-hosted"
 ```
 
-Then run:
+执行导入：
 
 ```bash
-# Maven
-dep-porter import --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0 --config config.toml
+# Maven 正式版本 → 发到 maven 仓库
+dep-porter import --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0
 
-# npm
-dep-porter import --kind npm --name lodash --version 4.17.21 --config config.toml
+# Maven SNAPSHOT → 自动发到 maven_snapshots 仓库（如果配置了的话）
+dep-porter import --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0-SNAPSHOT
 
-# PyPI
-dep-porter import --kind pypi --name requests --version 2.32.3 --config config.toml
+dep-porter import --kind npm --name lodash --version 4.17.21
+dep-porter import --kind pypi --name requests --version 2.32.3
 
-# Cargo
-dep-porter import --kind cargo --name serde --version 1.0.203 --config config.toml
+# Cargo 优先走 cargo 仓库，失败自动降级到 raw
+dep-porter import --kind cargo --name serde --version 1.0.203
 
-# Conan
-dep-porter import --kind conan --name zlib --version 1.2.13 --config config.toml
+dep-porter import --kind conan --name zlib --version 1.2.13
+
+# 覆盖模式：已存在则覆盖（受仓库写策略限制）
+dep-porter import --kind maven --name junit:junit --version 4.13.2 --overwrite
 ```
 
-## Nexus Repository Configuration
+> `--config` 默认读取当前目录的 `config.toml`，可省略。如需指定其他路径：`--config /path/to/config.toml`
 
-You need to create the following repositories in Nexus before importing:
+## 项目结构
 
-| Repository Type | Suggested Name   | Format  | Type   |
-|-----------------|------------------|---------|--------|
-| Maven           | maven-releases   | maven2  | hosted |
-| npm             | npm-hosted       | npm     | hosted |
-| PyPI            | pypi-hosted      | pypi    | hosted |
-| Raw (fallback)  | raw-hosted       | raw     | hosted |
-
-The raw repository is used as a fallback for Cargo and Conan, which Nexus does not natively support in most versions.
-
-## Testing
-
-### Local tests (no external dependencies)
-
-```bash
-cargo test
+```
+dep-porter/
+├── Cargo.toml               # Rust 项目配置
+├── Dockerfile.downloader     # Docker 下载器镜像（多阶段构建）
+├── SKILL.md                  # LLM 使用指南
+├── config.example.toml       # Nexus 配置示例
+├── scripts/
+│   └── download.sh           # 容器内下载脚本（Maven/npm/PyPI/Cargo/Conan）
+├── src/
+│   ├── main.rs               # 入口
+│   ├── cli.rs                # clap 参数解析
+│   ├── config.rs             # TOML 配置读取
+│   ├── docker.rs             # Docker 调用 + 镜像自动构建
+│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）
+│   ├── model.rs              # 数据类型定义
+│   ├── security.rs           # SCA 安全检查（OSV.dev API）
+│   └── util.rs               # 工具函数（目录命名、路径转换）
+└── tests/
+    ├── e2e.rs                # 本地逻辑测试 + 可选 Docker/Nexus E2E
+    └── docker_e2e.rs         # Docker E2E 测试（覆盖全部 5 种依赖类型）
 ```
 
-All local logic tests (directory naming, Maven coordinate parsing, config parsing, etc.) run without Docker or Nexus.
+## Nexus 仓库配置
 
-### Docker E2E tests
+导入前需要在 Nexus 创建以下仓库：
 
-Requires Docker and the downloader image built:
+| 仓库类型 | 建议名称 | 格式 | 类型 | 说明 |
+|---------|---------|------|------|------|
+| Maven releases | maven-releases | maven2 | hosted | 正式版本 |
+| Maven snapshots | maven-snapshots | maven2 | hosted | 快照版本（可选，不配则也发到 maven） |
+| npm | npm-hosted | npm | hosted | |
+| PyPI | pypi-hosted | pypi | hosted | |
+| Cargo | cargo-hosted | raw | hosted | 可选，不配则走 raw 兜底 |
+| raw（兜底） | raw-hosted | raw | hosted | Cargo/Conan 的 fallback |
 
-```bash
-docker build -f Dockerfile.downloader -t dep-downloader:latest .
-RUN_DOCKER_E2E=1 cargo test
-```
+**Maven**：版本号包含 `-SNAPSHOT` 的自动发到 `maven_snapshots` 仓库，其余发到 `maven` 仓库。
 
-### Nexus E2E tests
+**Cargo**：优先上传到 `cargo` 仓库（如果配置了且 Nexus 支持），失败则自动降级到 `raw` 仓库。
 
-Requires a running Nexus instance and these environment variables:
+**覆盖模式**：
+- 默认模式（skip-if-exists）：上传前先 HEAD 检查，已存在则跳过
+- `--overwrite` 模式：直接 PUT 覆盖，如果仓库写策略禁止覆盖（如 `ALLOW_ONCE`）会报错
 
-```bash
-export NEXUS_BASE_URL=http://nexus.example.com
-export NEXUS_USERNAME=admin
-export NEXUS_PASSWORD=admin123
-export NEXUS_MAVEN_REPO=maven-releases
-export NEXUS_RAW_REPO=raw-hosted
-RUN_NEXUS_E2E=1 cargo test
-```
-
-## Directory Naming Convention
-
-Download directories follow the pattern:
+## 目录命名规则
 
 ```
 {kind}_{safe_name}_{version}
 ```
 
-Where `safe_name` replaces `/`, `:`, `@`, `\` with `_`.
+`safe_name` 将 `/`、`:`、`@`、`\` 替换为 `_`。
 
-Examples:
+示例：
 
 ```
 maven_org.apache.commons_commons-lang3_3.14.0
@@ -187,27 +195,241 @@ cargo_serde_1.0.203
 conan_zlib_1.2.13
 ```
 
-## Frequently Asked Questions
+## 测试
 
-**Q: Can I use this without Docker?**
-A: The download phase requires Docker. The import phase does not.
+### 本地测试（不需要 Docker）
 
-**Q: What if Docker is not available on the air-gapped machine?**
-A: You only need Docker for the download phase (on the connected machine). The import phase uses direct HTTP uploads to Nexus.
+```bash
+cargo test
+```
 
-**Q: How are transitive dependencies handled?**
-A: Each package manager's native resolution is used:
-- Maven: `mvn dependency:go-offline`
-- npm: `npm install`
-- PyPI: `pip download`
-- Cargo: `cargo fetch` + `cargo vendor`
-- Conan: `conan install --build=missing`
+测试内容：目录命名、Maven 坐标解析、配置解析、错误处理等。
 
-**Q: What about Cargo and Conan support in Nexus?**
-A: Nexus Repository OSS does not natively support Cargo or Conan formats. These are uploaded to a raw repository as a fallback. If your Nexus instance has Cargo/Conan support (Pro or plugins), you can adjust the repository names in `config.toml`.
+### Docker E2E 测试
 
-**Q: Can I download multiple versions of the same package?**
-A: Run separate download commands for each version. Each creates its own directory.
+需要 Docker 环境：
 
-**Q: Does this work on Windows?**
-A: Yes. The CLI is a Rust binary that works on Windows, Linux, and macOS. Docker path mounting handles Windows paths automatically.
+```bash
+# 首次需要构建镜像（测试会自动构建，也可手动构建）
+docker build -f Dockerfile.downloader -t dep-downloader:latest .
+
+# 运行 Docker E2E 测试（覆盖 Maven/npm/PyPI/Cargo/Conan 全部 5 种类型）
+$env:RUN_DOCKER_E2E="1"   # PowerShell
+cargo test --test docker_e2e -- --test-threads=1
+```
+
+测试内容：镜像构建、全部工具可用性（mvn/java/node/npm/python/pip/twine/cargo/rustc/conan）、每种依赖类型的下载功能、目录命名验证、错误处理。
+
+### Nexus E2E 测试
+
+需要运行中的 Nexus 实例。
+
+**第 1 步：启动 Nexus 容器**
+
+```bash
+docker run -d --name nexus-test -p 8081:8081 sonatype/nexus3:latest
+```
+
+等待 Nexus 启动完成（约 1-2 分钟），可通过 `http://localhost:8081` 访问管理界面。
+
+**第 2 步：获取管理员密码**
+
+```bash
+docker exec nexus-test cat /nexus-data/admin.password
+```
+
+首次登录后按提示修改密码。
+
+**第 3 步：创建仓库**
+
+登录 Nexus 管理界面（`http://localhost:8081`），进入 Server Administration → Repositories → Create repository，创建以下 hosted 仓库：
+
+| 仓库类型 | 名称 | Format |
+|---------|------|--------|
+| maven2 (hosted) | maven-releases | maven2 |
+| npm (hosted) | npm-hosted | npm |
+| pypi (hosted) | pypi-hosted | pypi |
+| raw (hosted) | raw-hosted | raw |
+
+**第 4 步：运行测试**
+
+```bash
+# PowerShell
+$env:RUN_NEXUS_E2E="1"
+$env:NEXUS_BASE_URL="http://localhost:8081"
+$env:NEXUS_USERNAME="admin"
+$env:NEXUS_PASSWORD="<第2步获取的密码>"
+$env:NEXUS_MAVEN_REPO="maven-releases"
+$env:NEXUS_RAW_REPO="raw-hosted"
+# 可选
+# $env:NEXUS_MAVEN_SNAPSHOTS_REPO="maven-snapshots"
+# $env:NEXUS_CARGO_REPO="cargo-hosted"
+cargo test --test e2e -- --test-threads=1
+```
+
+```bash
+# Linux/macOS
+export RUN_NEXUS_E2E=1
+export NEXUS_BASE_URL=http://localhost:8081
+export NEXUS_USERNAME=admin
+export NEXUS_PASSWORD=<第2步获取的密码>
+export NEXUS_MAVEN_REPO=maven-releases
+export NEXUS_RAW_REPO=raw-hosted
+# 可选
+# export NEXUS_MAVEN_SNAPSHOTS_REPO=maven-snapshots
+# export NEXUS_CARGO_REPO=cargo-hosted
+cargo test --test e2e -- --test-threads=1
+```
+
+**第 5 步：清理**
+
+```bash
+docker rm -f nexus-test
+```
+
+### 端到端完整测试（下载 + 导入）
+
+验证从下载到导入的完整流程：
+
+```bash
+# 1. 启动 Nexus
+docker run -d --name nexus-test -p 8081:8081 sonatype/nexus3:latest
+# 等待 1-2 分钟启动完成
+
+# 2. 获取密码
+NEXUS_PASS=$(docker exec nexus-test cat /nexus-data/admin.password)
+echo "Nexus password: $NEXUS_PASS"
+
+# 3. 创建仓库（通过 Nexus REST API）
+curl -u "admin:$NEXUS_PASS" -X POST "http://localhost:8081/service/rest/v1/repositories/maven2/hosted" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"maven-releases","online":true,"storage":{"blobStoreName":"default","strictContentTypeValidation":true,"writePolicy":"ALLOW_ONCE"}}'
+
+curl -u "admin:$NEXUS_PASS" -X POST "http://localhost:8081/service/rest/v1/repositories/maven2/hosted" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"maven-snapshots","online":true,"storage":{"blobStoreName":"default","strictContentTypeValidation":true,"writePolicy":"ALLOW_ONCE"},"maven":{"versionPolicy":"SNAPSHOT","layoutPolicy":"STRICT"}}'
+
+curl -u "admin:$NEXUS_PASS" -X POST "http://localhost:8081/service/rest/v1/repositories/raw/hosted" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"raw-hosted","online":true,"storage":{"blobStoreName":"default","strictContentTypeValidation":false,"writePolicy":"ALLOW_ONCE"}}'
+
+# 4. 下载一个小型 Maven 依赖
+cargo run -- download --kind maven --name junit:junit --version 4.13.2
+
+# 5. 创建配置文件
+cat > config.toml <<EOF
+[nexus]
+base_url = "http://localhost:8081"
+username = "admin"
+password = "$NEXUS_PASS"
+
+[repositories]
+maven = "maven-releases"
+maven_snapshots = "maven-snapshots"
+npm = "npm-hosted"
+pypi = "pypi-hosted"
+cargo = "cargo-hosted"
+raw = "raw-hosted"
+EOF
+
+# 6. 导入到 Nexus
+cargo run -- import --kind maven --name junit:junit --version 4.13.2 --config config.toml
+
+# 7. 验证 SNAPSHOT 路由：下载一个 SNAPSHOT 版本并导入
+cargo run -- download --kind maven --name org.example:my-snapshot --version 1.0.0-SNAPSHOT
+cargo run -- import --kind maven --name org.example:my-snapshot --version 1.0.0-SNAPSHOT --config config.toml
+# → 自动发到 maven-snapshots 仓库
+
+# 8. 验证：在浏览器打开 http://localhost:8081
+#    - maven-releases 仓库有 junit:junit:4.13.2
+#    - maven-snapshots 仓库有 org.example:my-snapshot:1.0.0-SNAPSHOT
+# 9. 清理
+docker rm -f nexus-test
+rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT config.toml
+```
+
+## 开发指南
+
+### 技术栈
+
+- **语言**：Rust 2021 edition
+- **CLI**：clap 4（derive 宏）
+- **配置**：serde + toml
+- **HTTP**：reqwest（blocking）
+- **Docker 调用**：std::process::Command
+- **错误处理**：anyhow + thiserror
+
+### 关键设计
+
+- **Docker 镜像自动构建**：运行 `download` 时如果 `dep-downloader:latest` 不存在，会自动搜索 `Dockerfile.downloader` 并构建
+- **Windows 路径兼容**：`to_docker_mount_path()` 自动将 `C:\...` 转换为 `/c/...` 供 Docker 挂载
+- **多阶段构建**：builder 阶段安装 pip 包和 Rust 工具链，runtime 阶段通过 apt 安装 JDK/Maven/Node，利用缓存加速重建
+- **lib + bin 双 crate**：`src/lib.rs` 导出公共模块，`src/main.rs` 作为入口，测试可直接 import 库模块
+
+### 添加新的依赖类型
+
+1. `src/model.rs`：在 `DepKind` 枚举中添加新变体
+2. `scripts/download.sh`：添加对应的 `download_xxx()` 函数和 case 分支
+3. `src/import.rs`：添加对应的导入逻辑
+4. `tests/docker_e2e.rs`：添加工具可用性测试和下载测试
+5. `Dockerfile.downloader`：如需新工具，在 builder/runtime 阶段安装
+
+## 安全检查（SCA）
+
+下载时可选启用漏洞扫描，通过 [OSV.dev](https://osv.dev) API 查询已知 CVE：
+
+```bash
+dep-porter download --kind maven --name log4j:log4j --version 2.14.1 --check-security
+```
+
+如果发现漏洞，会显示详情并提示是否继续：
+
+```
+=== Security Advisory ===
+  maven log4j:log4j@2.14.1
+  Found 2 known vulnerability(ies):
+
+  [1] GHSA-26fg-89j6-3q3j (CVSS: 9.8) — Apache Log4j2 Remote Code Execution
+  [2] CVE-2021-44228 (CVSS: 10.0) — Log4j 2.x JNDI RCE
+=========================
+
+Continue download anyway? [y/N]
+```
+
+- 输入 `y` 继续下载，输入其他或直接回车取消
+- 不加 `--check-security` 则跳过检查直接下载
+- 支持 Maven/npm/PyPI/Cargo，Conan 暂不支持（OSV.dev 无此生态）
+
+## 常见问题
+
+**Q: 没有 Docker 能用吗？**
+下载阶段需要 Docker，导入阶段不需要。
+
+**Q: 内网机器没有 Docker 怎么办？**
+Docker 只在下载阶段使用（联网机器）。导入阶段通过 HTTP 直接上传到 Nexus。
+
+**Q: 传递依赖怎么处理？**
+各包管理器原生解析：
+- Maven：`mvn dependency:get`（只下载依赖本身和传递依赖，不拉 Maven 插件）
+- npm：`npm install`
+- PyPI：`pip download`
+- Cargo：`cargo fetch` + `cargo vendor`
+- Conan：`conan install`
+
+**Q: Maven SNAPSHOT 版本怎么处理？**
+版本号包含 `-SNAPSHOT` 的自动发到 `maven_snapshots` 仓库（如果配置了），否则也发到 `maven` 仓库。
+
+**Q: Cargo/Conan 在 Nexus 里不支持怎么办？**
+使用 raw 仓库兜底。如果 Nexus 有 Cargo/Conan 支持（Pro 版或插件），在 `config.toml` 中调整仓库名即可。
+
+**Q: 能下载同一包的多个版本吗？**
+可以，每个版本执行一次 `download`，各自生成独立目录。
+
+**Q: 导入时已存在的制品怎么处理？**
+默认跳过（skip-if-exists），加 `--overwrite` 则覆盖。覆盖受 Nexus 仓库写策略限制，`ALLOW_ONCE` 策略下覆盖会返回 4xx 错误。
+
+**Q: 安全检查会拖慢下载速度吗？**
+`--check-security` 是单次 HTTP 请求（OSV.dev API），通常 < 1 秒。不加此参数则无任何开销。
+
+**Q: 支持 Windows 吗？**
+支持。CLI 是 Rust 二进制，Windows/Linux 均可运行。Docker 路径挂载会自动处理 Windows 路径。

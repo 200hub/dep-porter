@@ -154,7 +154,6 @@ pub fn run_downloader(spec: &DepSpec, output_dir: &Path) -> Result<()> {
         "-v",
         &mount_arg,
         DOWNLOADER_IMAGE,
-        "dep-download",
         kind_str,
         &spec.name,
         &spec.version,

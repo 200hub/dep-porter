@@ -3,4 +3,5 @@ pub mod config;
 pub mod docker;
 pub mod import;
 pub mod model;
+pub mod security;
 pub mod util;

@@ -166,7 +166,30 @@ raw = "raw-hosted"
     assert_eq!(config.nexus.base_url, "http://nexus.example.com");
     assert_eq!(config.nexus.username, "admin");
     assert_eq!(config.repositories.maven, "maven-releases");
+    assert_eq!(config.repositories.maven_snapshots, None);
+    assert_eq!(config.repositories.cargo, None);
     assert_eq!(config.repositories.raw, "raw-hosted");
+}
+
+#[test]
+fn test_config_parse_with_optional_fields() {
+    let toml_str = r#"
+[nexus]
+base_url = "http://nexus.example.com"
+username = "admin"
+password = "secret"
+
+[repositories]
+maven = "maven-releases"
+maven_snapshots = "maven-snapshots"
+npm = "npm-hosted"
+pypi = "pypi-hosted"
+cargo = "cargo-hosted"
+raw = "raw-hosted"
+"#;
+    let config: dep_porter::config::AppConfig = toml::from_str(toml_str).unwrap();
+    assert_eq!(config.repositories.maven_snapshots.as_deref(), Some("maven-snapshots"));
+    assert_eq!(config.repositories.cargo.as_deref(), Some("cargo-hosted"));
 }
 
 #[test]
@@ -355,6 +378,8 @@ fn nexus_e2e_config() -> Option<dep_porter::config::AppConfig> {
     let password = std::env::var("NEXUS_PASSWORD").ok()?;
     let maven_repo = std::env::var("NEXUS_MAVEN_REPO").unwrap_or_else(|_| "maven-releases".to_string());
     let raw_repo = std::env::var("NEXUS_RAW_REPO").unwrap_or_else(|_| "raw-hosted".to_string());
+    let maven_snapshots = std::env::var("NEXUS_MAVEN_SNAPSHOTS_REPO").ok();
+    let cargo_repo = std::env::var("NEXUS_CARGO_REPO").ok();
 
     Some(dep_porter::config::AppConfig {
         nexus: dep_porter::config::NexusConfig {
@@ -364,8 +389,10 @@ fn nexus_e2e_config() -> Option<dep_porter::config::AppConfig> {
         },
         repositories: dep_porter::config::RepositoryConfig {
             maven: maven_repo,
+            maven_snapshots,
             npm: "npm-hosted".to_string(),
             pypi: "pypi-hosted".to_string(),
+            cargo: cargo_repo,
             raw: raw_repo,
         },
     })
@@ -386,6 +413,6 @@ fn test_nexus_upload_raw_file() {
     fs::write(&test_file, "dep-porter test upload").unwrap();
 
     let spec = dep_porter::model::DepSpec::new(DepKind::Cargo, "test-pkg".to_string(), "0.1.0".to_string());
-    dep_porter::import::import_to_nexus(&spec, tmp.path(), &config)
+    dep_porter::import::import_to_nexus(&spec, tmp.path(), &config, false)
         .expect("Nexus raw upload should succeed");
 }

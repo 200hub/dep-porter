@@ -36,6 +36,11 @@ pub struct DownloadArgs {
     /// Output directory. Defaults to the current working directory.
     #[arg(long, default_value = ".")]
     pub output: String,
+
+    /// Check for known vulnerabilities via OSV.dev before downloading.
+    /// If vulnerabilities are found, you will be prompted to continue or abort.
+    #[arg(long, default_value_t = false)]
+    pub check_security: bool,
 }
 
 /// Arguments for the `import` subcommand.
@@ -53,7 +58,13 @@ pub struct ImportArgs {
     #[arg(long)]
     pub version: String,
 
-    /// Path to the TOML configuration file.
-    #[arg(long)]
+    /// Path to the TOML configuration file. Defaults to config.toml in the current directory.
+    #[arg(long, default_value = "config.toml")]
     pub config: String,
+
+    /// Overwrite existing artifacts in Nexus.
+    /// If false (default), existing artifacts are skipped.
+    /// If true, PUT over existing artifacts (may fail if repo policy forbids it).
+    #[arg(long, default_value_t = false)]
+    pub overwrite: bool,
 }

@@ -23,12 +23,16 @@ pub struct NexusConfig {
 /// Repository name mappings for each dependency kind.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepositoryConfig {
-    /// Maven hosted-releases / hosted-snapshots repository name.
+    /// Maven hosted-releases repository name.
     pub maven: String,
+    /// Maven hosted-snapshots repository name (optional, falls back to maven).
+    pub maven_snapshots: Option<String>,
     /// npm hosted repository name.
     pub npm: String,
     /// PyPI hosted repository name.
     pub pypi: String,
+    /// Cargo hosted repository name (optional, falls back to raw).
+    pub cargo: Option<String>,
     /// Raw hosted repository name (fallback for cargo, conan).
     pub raw: String,
 }
