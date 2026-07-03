@@ -6,9 +6,10 @@ use log::{info, warn};
 
 use crate::config::AppConfig;
 use crate::model::{DepError, DepKind, DepSpec, MavenCoordinate};
+use crate::registry;
 use crate::util::{collect_files_sorted, relative_path};
 
-/// Import a downloaded dependency into the Nexus repository.
+/// 将下载的依赖项导入到Nexus仓库。
 pub fn import_to_nexus(
     spec: &DepSpec,
     download_dir: &Path,
@@ -16,9 +17,7 @@ pub fn import_to_nexus(
     overwrite: bool,
 ) -> Result<()> {
     if !download_dir.exists() {
-        return Err(
-            DepError::DownloadDirNotFound(download_dir.display().to_string()).into()
-        );
+        return Err(DepError::DownloadDirNotFound(download_dir.display().to_string()).into());
     }
 
     match spec.kind {
@@ -30,78 +29,75 @@ pub fn import_to_nexus(
     }
 }
 
-/// Import Maven artifacts by uploading each file in the local repository
-/// to the corresponding path in the Nexus Maven repository.
-fn import_maven(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrite: bool) -> Result<()> {
+/// 通过将本地仓库中的每个文件上传到Nexus Maven仓库中的相应路径来导入Maven工件。
+fn import_maven(
+    spec: &DepSpec,
+    download_dir: &Path,
+    config: &AppConfig,
+    overwrite: bool,
+) -> Result<()> {
     let coord = MavenCoordinate::parse(&spec.name)?;
-    let repo_dir = download_dir.join("repository");
 
-    if !repo_dir.exists() {
-        return Err(DepError::DownloadDirNotFound(format!(
-            "{} (expected 'repository/' subdirectory)",
-            repo_dir.display()
-        ))
-        .into());
-    }
+    // 兼容两种目录结构：
+    // 1. download_dir/repository/... (旧方式)
+    // 2. download_dir/... (新方式，直接是Maven仓库结构)
+    let repo_dir = if download_dir.join("repository").exists() {
+        download_dir.join("repository")
+    } else {
+        download_dir.to_path_buf()
+    };
 
-    // Verify the target artifact exists
-    let artifact_path = repo_dir.join(coord.group_path()).join(&coord.artifact_id).join(&spec.version);
-    if !artifact_path.exists() {
-        return Err(DepError::DownloadDirNotFound(format!(
-            "{}",
-            artifact_path.display()
-        ))
-        .into());
-    }
-
-    // Upload ALL files in the repository (including transitive dependencies)
+    // 上传仓库中的所有文件（包括传递依赖项）
     let files = collect_files_sorted(&repo_dir)?;
     if files.is_empty() {
-        return Err(
-            DepError::DownloadDirEmpty(repo_dir.display().to_string()).into()
-        );
+        return Err(DepError::DownloadDirEmpty(repo_dir.display().to_string()).into());
     }
 
-    // Filter out Maven metadata files (not artifacts, Nexus rejects them)
+    // 过滤掉Maven本地仓库的元数据文件（不是工件，Nexus会拒绝）
     let files: Vec<_> = files
         .into_iter()
         .filter(|f| {
             let name = f.file_name().unwrap_or_default().to_string_lossy();
+            // 过滤Maven本地仓库生成的元数据文件
             name != "_remote.repositories"
+                && name != "resolver-status.properties"
                 && !name.starts_with("maven-metadata-")
                 && name != "maven-metadata.xml"
         })
         .collect();
 
-    info!("Uploading {} files (including transitive dependencies)", files.len());
+    info!(
+        "正在上传{}个文件（包括传递依赖项）",
+        files.len()
+    );
 
     let client = reqwest::blocking::Client::new();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
 
-    // Route: -SNAPSHOT → maven_snapshots repo, otherwise → maven (releases)
-    let is_snapshot = spec.version.to_uppercase().contains("-SNAPSHOT");
-    let repo_name = if is_snapshot {
-        config.repositories.maven_snapshots.as_deref()
-            .unwrap_or(&config.repositories.maven)
-    } else {
-        &config.repositories.maven
-    };
-    if is_snapshot {
-        info!("SNAPSHOT version detected, uploading to '{}'", repo_name);
-    }
+    // SNAPSHOT版本的传递依赖项（非SNAPSHOT）应该上传到maven仓库，而不是maven-snapshots
+    let snapshot_repo = config
+        .repositories
+        .maven_snapshots
+        .as_deref()
+        .unwrap_or(&config.repositories.maven);
+    let release_repo = &config.repositories.maven;
 
     for file in &files {
         let full_rel = file
             .strip_prefix(&repo_dir)
-            .context("Failed to compute relative path")?
+            .context("计算相对路径失败")?
             .to_string_lossy()
             .replace('\\', "/");
-        let url = format!(
-            "{}/repository/{}/{}",
-            nexus_base, repo_name, full_rel
-        );
 
-        // If not overwriting, check if artifact already exists (HEAD)
+        // 根据文件路径判断是否是SNAPSHOT版本，选择对应的仓库
+        let repo_name = if full_rel.to_uppercase().contains("-SNAPSHOT") {
+            snapshot_repo
+        } else {
+            release_repo
+        };
+        let url = format!("{}/repository/{}/{}", nexus_base, repo_name, full_rel);
+
+        // 如果不覆盖，检查工件是否已存在（HEAD）
         if !overwrite {
             let head = client
                 .head(&url)
@@ -109,22 +105,22 @@ fn import_maven(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwri
                 .send();
             if let Ok(resp) = head {
                 if resp.status().is_success() {
-                    info!("Skipping (already exists): {}", url);
+                    info!("跳过（已存在）: {}", url);
                     continue;
                 }
             }
         }
 
-        info!("Uploading: {}", url);
-        let content = fs::read(file)
-            .with_context(|| format!("Failed to read {}", file.display()))?;
+        info!("正在上传: {}", url);
+        let content =
+            fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
         let resp = client
             .put(&url)
             .basic_auth(&config.nexus.username, Some(&config.nexus.password))
             .body(content)
             .send()
-            .with_context(|| format!("Failed to PUT {}", url))?;
+            .with_context(|| format!("PUT {}失败", url))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -138,39 +134,44 @@ fn import_maven(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwri
     }
 
     info!(
-        "Maven import complete: {} files uploaded for {}:{}:{}",
-        files.len(),
+        "Maven导入完成: 为{}:{}:{}上传了{}个文件",
         coord.group_id,
         coord.artifact_id,
-        spec.version
+        spec.version,
+        files.len()
     );
     Ok(())
 }
 
-/// Import npm packages by publishing to the Nexus npm repository.
+/// 通过使用标准npm发布协议将npm包发布到Nexus npm托管仓库来导入它们。
 ///
-/// If the download directory contains a standard npm package structure
-/// (package.json + tarball), we attempt `npm publish`.
-/// Otherwise, we fall back to uploading the tarball to the raw repository.
-fn import_npm(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrite: bool) -> Result<()> {
-    // Look for .tgz files in the download directory (npm pack output or cached tarballs)
+/// 原生npm仓库*不会*索引上传到任意路径的`.tgz`文件——该包对`npm install`不可见。
+/// 相反，我们为每个tarball（请求的包和所有传递依赖项）发送一个npm发布文档（packument），
+/// 其中tarball作为base64编码的`_attachment`嵌入，就像`npm publish`所做的那样。
+fn import_npm(
+    spec: &DepSpec,
+    download_dir: &Path,
+    config: &AppConfig,
+    overwrite: bool,
+) -> Result<()> {
+    // 收集所有tarball（请求的包 + 传递依赖项）。
     let files = collect_files_sorted(download_dir)?;
     let tgz_files: Vec<_> = files
         .iter()
         .filter(|f| {
-            f.extension()
-                .map(|e| e == "tgz" || e == "gz")
+            f.file_name()
+                .map(|n| n.to_string_lossy().ends_with(".tgz"))
                 .unwrap_or(false)
         })
         .collect();
 
     if tgz_files.is_empty() {
         warn!(
-            "No .tgz files found in {}. npm import requires a package tarball.",
+            "在{}中未找到.tgz文件。npm导入需要包tarball。",
             download_dir.display()
         );
         return Err(DepError::DownloadDirEmpty(format!(
-            "No .tgz files in {}",
+            "{}中没有.tgz文件",
             download_dir.display()
         ))
         .into());
@@ -179,69 +180,98 @@ fn import_npm(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrite
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
     let repo_name = &config.repositories.npm;
     let client = reqwest::blocking::Client::new();
+    let mut published = 0u32;
+    let mut skipped = 0u32;
 
     for file in &tgz_files {
-        let filename = file
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        let url = format!(
-            "{}/repository/{}/{}",
-            nexus_base, repo_name, filename
-        );
+        let tgz = fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
+        let package_json = registry::read_npm_package_json(&tgz)
+            .with_context(|| format!("从{}读取package.json失败", file.display()))?;
+
+        let (name, version, doc) =
+            registry::build_npm_publish_doc(&package_json, &tgz, nexus_base, repo_name)?;
+
+        // 如果已存在则跳过：HEAD版本化元数据端点。
+        let exists_url = format!(
+            "{}/repository/{}/{}/{}",
+            nexus_base,
+            repo_name,
+            registry::npm_encode_name(&name),
+            version
+        );
         if !overwrite {
-            let head = client
-                .head(&url)
+            if let Ok(resp) = client
+                .get(&exists_url)
                 .basic_auth(&config.nexus.username, Some(&config.nexus.password))
-                .send();
-            if let Ok(resp) = head {
+                .send()
+            {
                 if resp.status().is_success() {
-                    info!("Skipping (already exists): {}", url);
+                    info!("跳过（已存在）: {}@{}", name, version);
+                    skipped += 1;
                     continue;
                 }
             }
         }
 
-        info!("Uploading npm tarball: {}", url);
-        let content = fs::read(file)
-            .with_context(|| format!("Failed to read {}", file.display()))?;
+        let url = format!(
+            "{}/repository/{}/{}",
+            nexus_base,
+            repo_name,
+            registry::npm_encode_name(&name)
+        );
+        info!("正在发布npm包: {}@{}", name, version);
 
         let resp = client
             .put(&url)
             .basic_auth(&config.nexus.username, Some(&config.nexus.password))
-            .header("Content-Type", "application/octet-stream")
-            .body(content)
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_vec(&doc)?)
             .send()
-            .with_context(|| format!("Failed to PUT {}", url))?;
+            .with_context(|| format!("PUT {}失败", url))?;
 
         let status = resp.status();
         if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
             return Err(DepError::NexusUploadFailed {
-                url: url.clone(),
+                url: format!("{} ({}@{}): {}", url, name, version, body.trim()),
                 status: status.as_u16(),
             }
             .into());
         }
-        info!("  -> {}", status);
+        info!("  -> {} {}@{}", status, name, version);
+        published += 1;
     }
 
     info!(
-        "npm import complete: {} tarball(s) uploaded for {}@{}",
-        tgz_files.len(),
+        "npm导入完成 {}@{}: 发布了{}个，跳过了{}个（共{}个tarball）",
         spec.name,
-        spec.version
+        spec.version,
+        published,
+        skipped,
+        tgz_files.len()
     );
     Ok(())
 }
 
-/// Import PyPI packages using `twine upload`.
+/// 使用`twine upload`导入PyPI包。
 fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig) -> Result<()> {
+    // 先检查twine是否已安装
+    if which::which("twine").is_err() {
+        return Err(anyhow::anyhow!(
+            "twine未安装。请先安装twine:\n\
+             \n\
+             方式1 (推荐): pip install twine\n\
+             方式2: pipx install twine\n\
+             \n\
+             安装后请重新运行此命令。"
+        ));
+    }
+
     let packages_dir = download_dir.join("packages");
     if !packages_dir.exists() {
         return Err(DepError::DownloadDirNotFound(format!(
-            "{} (expected 'packages/' subdirectory)",
+            "{}（预期'packages/'子目录）",
             packages_dir.display()
         ))
         .into());
@@ -249,10 +279,11 @@ fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig) -> Resul
 
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
     let repo_name = &config.repositories.pypi;
-    let repo_url = format!("{}/repository/{}", nexus_base, repo_name);
+    // Nexus要求URL末尾带斜杠，否则返回400错误
+    let repo_url = format!("{}/repository/{}/", nexus_base, repo_name);
 
     info!(
-        "Uploading PyPI packages from {} to {}",
+        "正在从{}上传PyPI包到{}",
         packages_dir.display(),
         repo_url
     );
@@ -269,152 +300,189 @@ fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig) -> Resul
             &format!("{}/*", packages_dir.display()),
         ])
         .status()
-        .context(
-            "Failed to execute twine. Make sure twine is installed: pip install twine",
-        )?;
+        .context("执行twine失败")?;
 
     if !status.success() {
         return Err(DepError::DockerCommandFailed(format!(
-            "twine upload exited with status: {}",
+            "twine上传退出状态: {}",
             status
         ))
         .into());
     }
 
-    info!(
-        "PyPI import complete for {}=={}",
-        spec.name, spec.version
-    );
+    info!("PyPI导入完成 {}=={}", spec.name, spec.version);
     Ok(())
 }
 
-/// Import Cargo crates into Nexus.
+/// 将Cargo crate导入到原生Nexus Cargo托管仓库。
 ///
-/// Strategy:
-///   1. If `crates/` dir exists (generated by download.sh), upload `.crate` files
-///      to the cargo repository via Nexus cargo API (`/{name}/{version}/download`).
-///   2. If cargo repo fails or not configured, fall back to uploading `vendor/` to raw.
-fn import_cargo(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrite: bool) -> Result<()> {
+/// Nexus Cargo仓库只接受通过Cargo注册表API（`PUT /api/v1/crates/new`）的发布；
+/// 上传到原始路径的`.crate`文件不会被索引，也无法被`cargo`解析。
+/// 因此，我们使用该API发布每个真实的`.crate`文件（请求的crate和所有传递依赖项），
+/// 从下载时捕获的crates.io稀疏索引行（`index/{name}-{version}.json`）中提取每个crate所需的元数据。
+///
+/// 如果未配置cargo仓库，我们将回退到尽力而为的原始上传（虽然`cargo`无法使用，但会保留工件）。
+fn import_cargo(
+    spec: &DepSpec,
+    download_dir: &Path,
+    config: &AppConfig,
+    overwrite: bool,
+) -> Result<()> {
     let crates_dir = download_dir.join("crates");
+    let index_dir = download_dir.join("index");
 
     if crates_dir.exists() {
-        // Upload .crate files to cargo repository
         if let Some(cargo_repo) = &config.repositories.cargo {
-            info!("Uploading .crate files to cargo repository '{}'", cargo_repo);
-            match upload_crate_files(spec, &crates_dir, config, cargo_repo, overwrite) {
-                Ok(()) => {
-                    info!("Cargo import complete via '{}'", cargo_repo);
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!("Cargo repo '{}' failed ({}), falling back to raw", cargo_repo, e);
-                }
-            }
+            info!(
+                "正在将crate发布到原生cargo仓库'{}'",
+                cargo_repo
+            );
+            return publish_crates(&crates_dir, &index_dir, config, cargo_repo, overwrite)
+                .with_context(|| {
+                    format!(
+                        "将crate发布到cargo仓库'{}'失败",
+                        cargo_repo
+                    )
+                });
         }
+        warn!(
+            "未配置[repositories] cargo；回退到原始上传（cargo无法使用）。"
+        );
     } else {
-        info!("No crates/ directory found, falling back to vendor/ upload to raw");
+        warn!("未找到crates/目录；回退到原始上传。");
     }
 
-    // Fallback: upload vendor/ to raw repository
-    info!("Using raw repository as fallback for cargo");
+    // 回退：将所有内容上传到原始仓库（旧版，cargo无法使用）。
     import_raw(spec, download_dir, config, "cargo", overwrite)
 }
 
-/// Upload .crate files to a Nexus cargo repository via direct PUT.
-///
-/// URL format: PUT /repository/{repo}/{name}/{version}/{name}-{version}.crate
-fn upload_crate_files(
-    _spec: &DepSpec,
+/// 通过Cargo注册表发布API将每个`.crate`文件发布到Nexus Cargo托管仓库。
+fn publish_crates(
     crates_dir: &Path,
+    index_dir: &Path,
     config: &AppConfig,
     repo_name: &str,
     overwrite: bool,
 ) -> Result<()> {
     let files = collect_files_sorted(crates_dir)?;
-    if files.is_empty() {
+    let crate_files: Vec<_> = files
+        .iter()
+        .filter(|f| {
+            f.file_name()
+                .map(|n| n.to_string_lossy().ends_with(".crate"))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if crate_files.is_empty() {
         return Err(DepError::DownloadDirEmpty(crates_dir.display().to_string()).into());
     }
 
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
+    let publish_url = format!("{}/repository/{}/api/v1/crates/new", nexus_base, repo_name);
     let client = reqwest::blocking::Client::new();
-    let mut uploaded = 0u32;
+    let mut published = 0u32;
+    let mut skipped = 0u32;
 
-    for file in &files {
+    for file in &crate_files {
         let filename = file
             .file_name()
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
-
-        let crate_name_version = match filename.strip_suffix(".crate") {
-            Some(s) => s.to_string(),
-            None => {
-                info!("Skipping non-crate file: {}", filename);
-                continue;
-            }
+        let stem = match filename.strip_suffix(".crate") {
+            Some(s) => s,
+            None => continue,
         };
 
-        let (crate_name, crate_version) = match crate_name_version.rsplit_once('-') {
-            Some((name, ver)) => (name.to_string(), ver.to_string()),
-            None => {
-                info!("Skipping malformed crate filename: {}", filename);
-                continue;
-            }
-        };
+        // 伴随索引文件包含权威的名称/版本/元数据。
+        let index_file = index_dir.join(format!("{}.json", stem));
+        let index_line = fs::read_to_string(&index_file).with_context(|| {
+            format!(
+                "缺少'{}'的crates.io索引元数据（预期{}）。 \
+                 请使用更新的dep-porter重新下载以捕获索引元数据。",
+                stem,
+                index_file.display()
+            )
+        })?;
 
-        let url = format!(
-            "{}/repository/{}/{}/{}/{}",
-            nexus_base, repo_name, crate_name, crate_version, filename
-        );
+        let meta = registry::cargo_index_to_publish_meta(index_line.trim())?;
+        let name = meta["name"].as_str().unwrap_or("").to_string();
+        let version = meta["vers"].as_str().unwrap_or("").to_string();
 
-        // Skip-if-exists check
-        if !overwrite {
-            let head = client
-                .head(&url)
-                .basic_auth(&config.nexus.username, Some(&config.nexus.password))
-                .send();
-            if let Ok(resp) = head {
-                if resp.status().is_success() {
-                    info!("Skipping (already exists): {} {}", crate_name, crate_version);
-                    continue;
-                }
-            }
+        // 如果已存在则跳过：查询此crate/版本的稀疏索引。
+        if !overwrite
+            && crate_version_exists(&client, config, nexus_base, repo_name, &name, &version)
+        {
+            info!("跳过（已存在）: {} {}", name, version);
+            skipped += 1;
+            continue;
         }
 
-        info!("Uploading crate: {} {}", crate_name, crate_version);
-        let content = fs::read(file)
-            .with_context(|| format!("Failed to read {}", file.display()))?;
+        let crate_bytes =
+            fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
+        let body = registry::build_cargo_publish_body(&meta, &crate_bytes)?;
 
+        info!("正在发布crate: {} {}", name, version);
         let resp = client
-            .put(&url)
+            .put(&publish_url)
             .basic_auth(&config.nexus.username, Some(&config.nexus.password))
             .header("Content-Type", "application/octet-stream")
-            .body(content)
+            .body(body)
             .send()
-            .with_context(|| format!("Failed to PUT {}", url))?;
+            .with_context(|| format!("PUT {}失败", publish_url))?;
 
         let status = resp.status();
-        if !status.is_success() {
+        let text = resp.text().unwrap_or_default();
+        // Cargo API在逻辑失败时返回200状态码和一个`errors`数组。
+        if !status.is_success() || text.contains("\"errors\"") {
             return Err(DepError::NexusUploadFailed {
-                url: url.clone(),
+                url: format!("{} ({} {}): {}", publish_url, name, version, text.trim()),
                 status: status.as_u16(),
             }
             .into());
         }
-        info!("  -> {}", status);
-        uploaded += 1;
+        info!("  -> {} {} {}", status, name, version);
+        published += 1;
     }
 
-    if uploaded == 0 {
-        anyhow::bail!("No .crate files found in {}", crates_dir.display());
-    }
-
+    info!(
+        "通过'{}'完成Cargo导入: 发布了{}个，跳过了{}个（共{}个crate）",
+        repo_name,
+        published,
+        skipped,
+        crate_files.len()
+    );
     Ok(())
 }
 
-/// Upload all files under `download_dir` to a named Nexus repository.
+/// 通过请求crate的下载资源来检查其版本是否已存在于Nexus cargo仓库中
+/// （比稀疏索引更可靠，因为Nexus可能从过时的缓存中提供服务）。
+fn crate_version_exists(
+    client: &reqwest::blocking::Client,
+    config: &AppConfig,
+    nexus_base: &str,
+    repo_name: &str,
+    name: &str,
+    version: &str,
+) -> bool {
+    let url = format!(
+        "{}/repository/{}/crates/{}/{}/download",
+        nexus_base, repo_name, name, version
+    );
+    if let Ok(resp) = client
+        .get(&url)
+        .basic_auth(&config.nexus.username, Some(&config.nexus.password))
+        .send()
+    {
+        return resp.status().is_success();
+    }
+    false
+}
+
+/// 将`download_dir`下的所有文件上传到指定的Nexus仓库。
 ///
-/// `kind_prefix` is used in the URL path (e.g. `cargo/serde/1.0.0/...`).
+/// `kind_prefix`用于URL路径中（例如`cargo/serde/1.0.0/...`）。
 fn upload_files_to_repo(
     spec: &DepSpec,
     download_dir: &Path,
@@ -425,9 +493,7 @@ fn upload_files_to_repo(
 ) -> Result<()> {
     let files = collect_files_sorted(download_dir)?;
     if files.is_empty() {
-        return Err(
-            DepError::DownloadDirEmpty(download_dir.display().to_string()).into()
-        );
+        return Err(DepError::DownloadDirEmpty(download_dir.display().to_string()).into());
     }
 
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
@@ -435,7 +501,7 @@ fn upload_files_to_repo(
 
     for file in &files {
         let rel = relative_path(download_dir, file)
-            .context("Failed to compute relative path")?
+            .context("计算相对路径失败")?
             .to_string_lossy()
             .replace('\\', "/");
 
@@ -451,15 +517,15 @@ fn upload_files_to_repo(
                 .send();
             if let Ok(resp) = head {
                 if resp.status().is_success() {
-                    info!("Skipping (already exists): {}", url);
+                    info!("跳过（已存在）: {}", url);
                     continue;
                 }
             }
         }
 
-        info!("Uploading: {}", url);
-        let content = fs::read(file)
-            .with_context(|| format!("Failed to read {}", file.display()))?;
+        info!("正在上传: {}", url);
+        let content =
+            fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
         let resp = client
             .put(&url)
@@ -467,7 +533,7 @@ fn upload_files_to_repo(
             .header("Content-Type", "application/octet-stream")
             .body(content)
             .send()
-            .with_context(|| format!("Failed to PUT {}", url))?;
+            .with_context(|| format!("PUT {}失败", url))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -483,7 +549,7 @@ fn upload_files_to_repo(
     Ok(())
 }
 
-/// Import files into a Nexus raw repository as a fallback for unsupported types.
+/// 将文件导入到Nexus原始仓库，作为不支持类型的回退方案。
 fn import_raw(
     spec: &DepSpec,
     download_dir: &Path,
@@ -492,10 +558,17 @@ fn import_raw(
     overwrite: bool,
 ) -> Result<()> {
     let repo_name = &config.repositories.raw;
-    upload_files_to_repo(spec, download_dir, config, repo_name, kind_prefix, overwrite)?;
+    upload_files_to_repo(
+        spec,
+        download_dir,
+        config,
+        repo_name,
+        kind_prefix,
+        overwrite,
+    )?;
 
     info!(
-        "{} import complete for {}@{} (via raw repository '{}')",
+        "{}导入完成 {}@{}（通过原始仓库'{}'）",
         kind_prefix, spec.name, spec.version, repo_name
     );
     Ok(())

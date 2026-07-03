@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
 
-/// A CLI tool to download dependencies from the internet and import them
-/// into an air-gapped Nexus repository.
+/// 一个从互联网下载依赖项并将其导入到气隙隔离的Nexus仓库中的CLI工具。
 #[derive(Debug, Parser)]
 #[command(name = "dep-porter", version, about)]
 pub struct Cli {
@@ -11,60 +10,60 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Download a dependency and all its transitive dependencies.
+    /// 下载依赖项及其所有传递依赖项。
     Download(DownloadArgs),
-    /// Import a previously downloaded dependency into Nexus.
+    /// 将先前下载的依赖项导入到Nexus。
     Import(ImportArgs),
 }
 
-/// Arguments for the `download` subcommand.
+/// `download`子命令的参数。
 #[derive(Debug, Parser)]
 pub struct DownloadArgs {
-    /// Dependency kind: maven, npm, pypi, cargo, conan.
+    /// 依赖类型：maven、npm、pypi、cargo、conan。
     #[arg(long, value_parser = clap::value_parser!(crate::model::DepKind))]
     pub kind: crate::model::DepKind,
 
-    /// Dependency name (e.g. `org.apache.commons:commons-lang3` for Maven,
-    /// `lodash` for npm, `requests` for PyPI, `serde` for Cargo, `zlib` for Conan).
+    /// 依赖名称（例如Maven的`org.apache.commons:commons-lang3`，
+    /// npm的`lodash`，PyPI的`requests`，Cargo的`serde`，Conan的`zlib`）。
     #[arg(long)]
     pub name: String,
 
-    /// Dependency version (e.g. `3.14.0`, `4.17.21`).
+    /// 依赖版本（例如`3.14.0`、`4.17.21`）。
     #[arg(long)]
     pub version: String,
 
-    /// Output directory. Defaults to the current working directory.
+    /// 输出目录。默认为当前工作目录。
     #[arg(long, default_value = ".")]
     pub output: String,
 
-    /// Check for known vulnerabilities via OSV.dev before downloading.
-    /// If vulnerabilities are found, you will be prompted to continue or abort.
+    /// 下载前通过OSV.dev检查已知漏洞。
+    /// 如果发现漏洞，将提示您继续或中止。
     #[arg(long, default_value_t = false)]
     pub check_security: bool,
 }
 
-/// Arguments for the `import` subcommand.
+/// `import`子命令的参数。
 #[derive(Debug, Parser)]
 pub struct ImportArgs {
-    /// Dependency kind: maven, npm, pypi, cargo, conan.
+    /// 依赖类型：maven、npm、pypi、cargo、conan。
     #[arg(long, value_parser = clap::value_parser!(crate::model::DepKind))]
     pub kind: crate::model::DepKind,
 
-    /// Dependency name.
+    /// 依赖名称。
     #[arg(long)]
     pub name: String,
 
-    /// Dependency version.
+    /// 依赖版本。
     #[arg(long)]
     pub version: String,
 
-    /// Path to the TOML configuration file. Defaults to config.toml in the current directory.
+    /// TOML配置文件路径。默认为当前目录下的config.toml。
     #[arg(long, default_value = "config.toml")]
     pub config: String,
 
-    /// Overwrite existing artifacts in Nexus.
-    /// If false (default), existing artifacts are skipped.
-    /// If true, PUT over existing artifacts (may fail if repo policy forbids it).
+    /// 覆盖Nexus中的现有工件。
+    /// 如果为false（默认），则跳过现有工件。
+    /// 如果为true，则覆盖现有工件（如果仓库策略禁止，可能会失败）。
     #[arg(long, default_value_t = false)]
     pub overwrite: bool,
 }

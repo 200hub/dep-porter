@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::model::DepKind;
 
-/// OSV.dev vulnerability query request.
+/// OSV.dev漏洞查询请求。
 #[derive(Debug, serde::Serialize)]
 struct OsvQuery {
     package: OsvPackage,
@@ -17,7 +17,7 @@ struct OsvPackage {
     ecosystem: String,
 }
 
-/// OSV.dev vulnerability query response.
+/// OSV.dev漏洞查询响应。
 #[derive(Debug, Deserialize)]
 struct OsvResponse {
     #[serde(default)]
@@ -40,7 +40,7 @@ struct OsvSeverity {
     _severity_type: String,
 }
 
-/// A single vulnerability finding.
+/// 单个漏洞发现。
 #[derive(Debug)]
 pub struct VulnFinding {
     pub id: String,
@@ -48,21 +48,21 @@ pub struct VulnFinding {
     pub score: String,
 }
 
-/// Map DepKind to OSV.dev ecosystem name.
+/// 将DepKind映射到OSV.dev生态系统名称。
 fn to_ecosystem(kind: DepKind) -> Option<&'static str> {
     match kind {
         DepKind::Maven => Some("Maven"),
         DepKind::Npm => Some("npm"),
         DepKind::Pypi => Some("PyPI"),
         DepKind::Cargo => Some("crates.io"),
-        DepKind::Conan => None, // OSV.dev does not support Conan
+        DepKind::Conan => None, // OSV.dev不支持Conan
     }
 }
 
-/// Query OSV.dev for known vulnerabilities of a dependency.
+/// 查询OSV.dev以获取依赖项的已知漏洞。
 ///
-/// Returns a list of findings. An empty list means no known vulnerabilities.
-/// Returns `Ok(None)` if the ecosystem is not supported by OSV.dev.
+/// 返回发现列表。空列表表示没有已知漏洞。
+/// 如果生态系统不被OSV.dev支持，则返回`Ok(None)`。
 pub fn check_vulnerabilities(
     kind: DepKind,
     name: &str,
@@ -118,7 +118,7 @@ pub fn check_vulnerabilities(
     Ok(Some(findings))
 }
 
-/// Print vulnerability findings via the log crate.
+/// 通过log crate打印漏洞发现。
 pub fn print_findings(kind: DepKind, name: &str, version: &str, findings: &[VulnFinding]) {
     warn!("=== Security Advisory ===");
     warn!("  {} {}@{}", kind, name, version);
@@ -137,12 +137,12 @@ pub fn print_findings(kind: DepKind, name: &str, version: &str, findings: &[Vuln
     warn!("=========================");
 }
 
-/// Prompt the user to continue or abort when vulnerabilities are found.
-/// Returns `true` to continue, `false` to abort.
+/// 发现漏洞时提示用户继续或中止。
+/// 返回`true`表示继续，`false`表示中止。
 pub fn prompt_continue() -> bool {
     use std::io::{self, Write};
 
-    eprint!("Continue download anyway? [y/N] ");
+    eprint!("是否继续下载？[y/N] ");
     io::stderr().flush().ok();
 
     let mut input = String::new();

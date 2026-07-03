@@ -8,13 +8,13 @@ use log::{info, warn};
 use crate::model::{DepError, DepSpec};
 use crate::util::{to_docker_mount_path, DOWNLOADER_IMAGE};
 
-/// Check that Docker is installed and available in PATH.
+/// 检查Docker是否已安装且在PATH中可用。
 pub fn ensure_docker_installed() -> Result<()> {
     which::which("docker").map_err(|_| DepError::DockerNotFound)?;
     Ok(())
 }
 
-/// Check whether the downloader image exists locally.
+/// 检查下载器镜像是否存在于本地。
 pub fn image_exists() -> bool {
     Command::new("docker")
         .args(["image", "inspect", DOWNLOADER_IMAGE])
@@ -25,12 +25,12 @@ pub fn image_exists() -> bool {
         .unwrap_or(false)
 }
 
-/// Locate the `Dockerfile.downloader` on disk.
+/// 在磁盘上定位`Dockerfile.downloader`。
 ///
-/// Search order:
-///   1. Current working directory
-///   2. Parent of the current executable
-///   3. Walk up from cwd looking for it
+/// 搜索顺序：
+///   1. 当前工作目录
+///   2. 当前可执行文件的父目录
+///   3. 从当前工作目录向上遍历查找
 fn find_dockerfile() -> Option<PathBuf> {
     let candidates: Vec<PathBuf> = {
         let mut v = Vec::new();
@@ -51,7 +51,7 @@ fn find_dockerfile() -> Option<PathBuf> {
         }
     }
 
-    // Walk up from cwd
+    // 从当前工作目录向上遍历
     if let Ok(mut dir) = env::current_dir() {
         loop {
             let candidate = dir.join("Dockerfile.downloader");
@@ -67,23 +67,22 @@ fn find_dockerfile() -> Option<PathBuf> {
     None
 }
 
-/// Build the downloader Docker image from the Dockerfile.downloader.
+/// 从Dockerfile.downloader构建下载器Docker镜像。
 ///
-/// Searches for `Dockerfile.downloader` in the current directory, the
-/// executable's parent, and walking up the directory tree.
+/// 在当前目录、可执行文件的父目录以及向上遍历目录树时搜索`Dockerfile.downloader`。
 pub fn build_image(dockerfile_dir: &Path) -> Result<()> {
     let dockerfile = dockerfile_dir.join("Dockerfile.downloader");
     if !dockerfile.is_file() {
         return Err(anyhow::anyhow!(
-            "Dockerfile.downloader not found in {}",
+            "在{}中未找到Dockerfile.downloader",
             dockerfile_dir.display()
         ));
     }
 
     info!(
-        "Building Docker image {} from {} ...",
-        DOWNLOADER_IMAGE,
-        dockerfile.display()
+        "正在从{}构建Docker镜像{} ...",
+        dockerfile.display(),
+        DOWNLOADER_IMAGE
     );
 
     let status = Command::new("docker")
@@ -97,20 +96,20 @@ pub fn build_image(dockerfile_dir: &Path) -> Result<()> {
         ])
         .current_dir(dockerfile_dir)
         .status()
-        .context("Failed to execute docker build")?;
+        .context("执行docker build失败")?;
 
     if !status.success() {
         return Err(
-            DepError::DockerCommandFailed("docker build failed".to_string()).into()
+            DepError::DockerCommandFailed("docker build失败".to_string()).into()
         );
     }
 
-    info!("Docker image {} built successfully.", DOWNLOADER_IMAGE);
+    info!("Docker镜像{}构建成功。", DOWNLOADER_IMAGE);
     Ok(())
 }
 
-/// Ensure the downloader image is available.  If it does not exist,
-/// attempt to locate `Dockerfile.downloader` and build it automatically.
+/// 确保下载器镜像可用。如果不存在，
+/// 尝试定位`Dockerfile.downloader`并自动构建。
 pub fn ensure_image() -> Result<()> {
     ensure_docker_installed()?;
 
@@ -119,7 +118,7 @@ pub fn ensure_image() -> Result<()> {
     }
 
     warn!(
-        "Docker image '{}' not found. Attempting automatic build...",
+        "未找到Docker镜像'{}'。尝试自动构建...",
         DOWNLOADER_IMAGE
     );
 
@@ -135,10 +134,9 @@ pub fn ensure_image() -> Result<()> {
     build_image(&dir)
 }
 
-/// Run the downloader container to download a dependency.
+/// 运行下载器容器以下载依赖项。
 ///
-/// If the Docker image does not exist, it will be built automatically
-/// from `Dockerfile.downloader`.
+/// 如果Docker镜像不存在，将自动从`Dockerfile.downloader`构建。
 pub fn run_downloader(spec: &DepSpec, output_dir: &Path) -> Result<()> {
     ensure_image()?;
 
@@ -161,18 +159,18 @@ pub fn run_downloader(spec: &DepSpec, output_dir: &Path) -> Result<()> {
     ];
 
     info!(
-        "Running: docker run --rm -v {} {} dep-download {} {} {} /workspace/out",
+        "正在运行: docker run --rm -v {} {} dep-download {} {} {} /workspace/out",
         mount_arg, DOWNLOADER_IMAGE, kind_str, spec.name, spec.version
     );
 
     let status = Command::new("docker")
         .args(&args)
         .status()
-        .context("Failed to execute docker run")?;
+        .context("执行docker run失败")?;
 
     if !status.success() {
         return Err(DepError::DockerCommandFailed(format!(
-            "docker run exited with status: {}",
+            "docker run退出状态: {}",
             status
         ))
         .into());

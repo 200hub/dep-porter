@@ -18,21 +18,25 @@
 
 ## 支持的依赖类型
 
-| 类型 | 下载 | 导入 Nexus | 说明 |
-|------|------|-----------|------|
-| Maven | ✅ | Maven 仓库 | `mvn dependency:get` 递归下载 |
-| npm | ✅ | npm 仓库 | `npm install` 下载 + tarball 上传 |
-| PyPI | ✅ | PyPI 仓库 | `pip download` + `twine upload` |
-| Cargo | ✅ | cargo/raw 仓库 | `cargo vendor`，优先 cargo 仓库，失败降级 raw |
-| Conan | ✅ | raw 仓库 | `conan install` 缓存配方（Nexus 原生不支持，走 raw 兜底） |
+| 类型  | 下载 | 导入 Nexus | 说明                                                                   |
+| ----- | ---- | ---------- | ---------------------------------------------------------------------- |
+| Maven | ✅    | Maven 仓库 | `mvn dependency:get` 递归下载；按 Maven2 布局逐文件上传                |
+| npm   | ✅    | npm 仓库   | 打包依赖树中**全部**包，按 npm publish 协议发布（含传递依赖）          |
+| PyPI  | ✅    | PyPI 仓库  | `pip download` + `twine upload`                                        |
+| Cargo | ✅    | Cargo 仓库 | 复制真实 `.crate`，按 Cargo registry publish 协议发布到原生 Cargo 仓库 |
+| Conan | ✅    | raw 仓库   | `conan install` 缓存配方（Nexus 原生不支持，走 raw 兜底）              |
+
+> **重要**：npm 与 Cargo 的导入使用各自的原生发布协议（npm publish 文档、Cargo `PUT /api/v1/crates/new`），
+> 而不是把文件堆到任意路径。这样上传后的包才能被 `npm install` / `cargo build` 正常解析和下载。
+> 导入端全部通过 HTTP 实现，**无需安装 npm / cargo**（仅 PyPI 仍依赖 `twine`）。
 
 ## 环境要求
 
-| 工具 | 用途 | 阶段 |
-|------|------|------|
-| Rust 1.70+ | 编译 CLI | 开发 |
-| Docker | 运行下载器容器 | 外网下载 |
-| twine | PyPI 导入 | 内网导入（可选） |
+| 工具       | 用途           | 阶段             |
+| ---------- | -------------- | ---------------- |
+| Rust 1.70+ | 编译 CLI       | 开发             |
+| Docker     | 运行下载器容器 | 外网下载         |
+| twine      | PyPI 导入      | 内网导入（可选） |
 
 ## 快速开始
 
@@ -62,7 +66,7 @@ docker build -f Dockerfile.downloader -t dep-downloader:latest .
 dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0
 
 # Maven（SNAPSHOT 快照版本）
-dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0-SNAPSHOT
+dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.15.1-SNAPSHOT
 
 # npm
 dep-porter download --kind npm --name @h-ai/serv --version 0.1.0-alpha.31
@@ -147,8 +151,7 @@ dep-porter/
 │   ├── cli.rs                # clap 参数解析
 │   ├── config.rs             # TOML 配置读取
 │   ├── docker.rs             # Docker 调用 + 镜像自动构建
-│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）
-│   ├── model.rs              # 数据类型定义
+│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）│   ├── registry.rs            # 原生发布载荷构造（Cargo publish / npm publish）│   ├── model.rs              # 数据类型定义
 │   ├── security.rs           # SCA 安全检查（OSV.dev API）
 │   └── util.rs               # 工具函数（目录命名、路径转换）
 └── tests/
@@ -160,22 +163,65 @@ dep-porter/
 
 导入前需要在 Nexus 创建以下仓库：
 
-| 仓库类型 | 建议名称 | 格式 | 类型 | 说明 |
-|---------|---------|------|------|------|
-| Maven releases | maven-releases | maven2 | hosted | 正式版本 |
-| Maven snapshots | maven-snapshots | maven2 | hosted | 快照版本（可选，不配则也发到 maven） |
-| npm | npm-hosted | npm | hosted | |
-| PyPI | pypi-hosted | pypi | hosted | |
-| Cargo | cargo-hosted | raw | hosted | 可选，不配则走 raw 兜底 |
-| raw（兜底） | raw-hosted | raw | hosted | Cargo/Conan 的 fallback |
+| 仓库类型        | 建议名称        | 格式      | 类型   | 说明                                                                    |
+| --------------- | --------------- | --------- | ------ | ----------------------------------------------------------------------- |
+| Maven releases  | maven-releases  | maven2    | hosted | 正式版本                                                                |
+| Maven snapshots | maven-snapshots | maven2    | hosted | 快照版本（可选，不配则也发到 maven）                                    |
+| npm             | npm-hosted      | npm       | hosted | 原生 npm 格式                                                           |
+| PyPI            | pypi-hosted     | pypi      | hosted | 原生 pypi 格式                                                          |
+| Cargo           | cargo-hosted    | cargo | hosted | 原生 Cargo 格式（需 Nexus 3.74+，仅支持 sparse 协议）；未配置时降级 raw |
+| raw（兜底）     | raw-hosted      | raw       | hosted | Conan 以及无 Cargo 仓库时的 fallback                                    |
 
 **Maven**：版本号包含 `-SNAPSHOT` 的自动发到 `maven_snapshots` 仓库，其余发到 `maven` 仓库。
 
-**Cargo**：优先上传到 `cargo` 仓库（如果配置了且 Nexus 支持），失败则自动降级到 `raw` 仓库。
+**Cargo**：上传到原生 `cargo` 格式仓库（Nexus 3.74+），使用 Cargo registry publish 协议（`PUT /api/v1/crates/new`）逐个发布真实 `.crate`，发布后可通过 sparse 协议被 `cargo` 解析。若未配置 `cargo` 仓库，则降级把文件堆到 `raw`（**此时 `cargo` 客户端无法使用**，仅作留存）。
+
+**npm**：使用 npm publish 协议发布依赖树中的每一个 tarball（目标包 + 全部传递依赖），发布后可被 `npm install` 正常解析。
 
 **覆盖模式**：
 - 默认模式（skip-if-exists）：上传前先 HEAD 检查，已存在则跳过
 - `--overwrite` 模式：直接 PUT 覆盖，如果仓库写策略禁止覆盖（如 `ALLOW_ONCE`）会报错
+
+## 内网消费已导入的依赖
+
+导入完成后，内网开发机需要把包管理器指向 Nexus 才能使用这些依赖。
+
+**Cargo**（在项目根或 `~/.cargo/config.toml`）：
+
+```toml
+[registries.nexus]
+index = "sparse+http://nexus.internal.example.com/repository/cargo/"
+
+# 让所有 crates.io 依赖都从 Nexus 解析
+[source.crates-io]
+replace-with = "nexus"
+
+[source.nexus]
+registry = "sparse+http://nexus.internal.example.com/repository/cargo/"
+```
+
+Nexus Cargo 仓库需要认证，凭据以 token 形式提供（`Basic base64(user:password)`）：
+
+```bash
+# 例如 admin:admin123 → Basic YWRtaW46YWRtaW4xMjM=
+export CARGO_REGISTRIES_NEXUS_TOKEN="Basic YWRtaW46YWRtaW4xMjM="
+cargo build
+```
+
+**npm**（`.npmrc`）：
+
+```ini
+registry=http://nexus.internal.example.com/repository/npm/
+//nexus.internal.example.com/repository/npm/:_auth=BASE64(user:password)
+```
+
+```bash
+npm install     # 依赖将从 Nexus 拉取
+```
+
+**Maven**（`~/.m2/settings.xml`）：把 `<mirror>` 指向 `maven-releases`/`maven-public`，即可解析已导入的构件。
+
+**PyPI**：`pip install --index-url http://user:password@nexus.internal.example.com/repository/pypi/simple/ <包名>`。
 
 ## 目录命名规则
 
@@ -222,70 +268,52 @@ cargo test --test docker_e2e -- --test-threads=1
 
 ### Nexus E2E 测试
 
-需要运行中的 Nexus 实例。
+Nexus E2E 测试会向**真实运行的 Nexus** 发布各类型构件，并验证它们能以正确的原生格式被检索/使用（即真正可用）。测试默认读取项目根目录的 `config.toml`，也可用 `NEXUS_*` 环境变量覆盖。
 
-**第 1 步：启动 Nexus 容器**
+覆盖的验证（`tests/e2e.rs`）：
 
-```bash
-docker run -d --name nexus-test -p 8081:8081 sonatype/nexus3:latest
-```
+| 测试                                 | 内容                                                                          |
+| ------------------------------------ | ----------------------------------------------------------------------------- |
+| `test_e2e_cargo_publish_and_resolve` | 发布带传递依赖的 crate，校验 sparse index 列出版本与依赖、download 端点可下载 |
+| `test_e2e_npm_publish_and_resolve`   | 发布目标包与传递依赖，校验 packument 记录依赖、dist tarball 可下载            |
+| `test_e2e_maven_publish_and_resolve` | 上传 jar+pom，校验构件可检索                                                  |
+| `test_e2e_raw_upload`                | Conan/raw 兜底上传，校验可检索                                                |
 
-等待 Nexus 启动完成（约 1-2 分钟），可通过 `http://localhost:8081` 访问管理界面。
+测试会为每次运行生成唯一版本号，避免与已发布构件冲突。
 
-**第 2 步：获取管理员密码**
+**方式 A：使用项目 `config.toml`（推荐）**
 
-```bash
-docker exec nexus-test cat /nexus-data/admin.password
-```
-
-首次登录后按提示修改密码。
-
-**第 3 步：创建仓库**
-
-登录 Nexus 管理界面（`http://localhost:8081`），进入 Server Administration → Repositories → Create repository，创建以下 hosted 仓库：
-
-| 仓库类型 | 名称 | Format |
-|---------|------|--------|
-| maven2 (hosted) | maven-releases | maven2 |
-| npm (hosted) | npm-hosted | npm |
-| pypi (hosted) | pypi-hosted | pypi |
-| raw (hosted) | raw-hosted | raw |
-
-**第 4 步：运行测试**
-
-```bash
-# PowerShell
-$env:RUN_NEXUS_E2E="1"
-$env:NEXUS_BASE_URL="http://localhost:8081"
-$env:NEXUS_USERNAME="admin"
-$env:NEXUS_PASSWORD="<第2步获取的密码>"
-$env:NEXUS_MAVEN_REPO="maven-releases"
-$env:NEXUS_RAW_REPO="raw-hosted"
-# 可选
-# $env:NEXUS_MAVEN_SNAPSHOTS_REPO="maven-snapshots"
-# $env:NEXUS_CARGO_REPO="cargo-hosted"
-cargo test --test e2e -- --test-threads=1
-```
+确保根目录 `config.toml` 指向可用的 Nexus（默认 `http://localhost:8081`，仓库名 `maven-releases`/`npm`/`pypi`/`cargo`/`raw`）：
 
 ```bash
 # Linux/macOS
 export RUN_NEXUS_E2E=1
-export NEXUS_BASE_URL=http://localhost:8081
-export NEXUS_USERNAME=admin
-export NEXUS_PASSWORD=<第2步获取的密码>
-export NEXUS_MAVEN_REPO=maven-releases
-export NEXUS_RAW_REPO=raw-hosted
-# 可选
-# export NEXUS_MAVEN_SNAPSHOTS_REPO=maven-snapshots
-# export NEXUS_CARGO_REPO=cargo-hosted
 cargo test --test e2e -- --test-threads=1
 ```
 
-**第 5 步：清理**
+```powershell
+# PowerShell
+$env:RUN_NEXUS_E2E="1"
+cargo test --test e2e -- --test-threads=1
+```
+
+**方式 B：用环境变量覆盖仓库/凭据**
 
 ```bash
-docker rm -f nexus-test
+export RUN_NEXUS_E2E=1
+export NEXUS_BASE_URL=http://localhost:8081
+export NEXUS_USERNAME=admin
+export NEXUS_PASSWORD=<密码>
+export NEXUS_MAVEN_REPO=maven-releases
+export NEXUS_NPM_REPO=npm
+export NEXUS_PYPI_REPO=pypi
+export NEXUS_CARGO_REPO=cargo
+export NEXUS_RAW_REPO=raw
+# 可选：export NEXUS_MAVEN_SNAPSHOTS_REPO=maven-snapshots
+cargo test --test e2e -- --test-threads=1
 ```
+
+> 若要自建测试 Nexus，需创建以下 hosted 仓库：maven2（maven-releases）、npm、pypi、**cargo（format=cargo，Nexus 3.74+）**、raw。
 
 ### 端到端完整测试（下载 + 导入）
 
@@ -370,7 +398,7 @@ rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT con
 
 1. `src/model.rs`：在 `DepKind` 枚举中添加新变体
 2. `scripts/download.sh`：添加对应的 `download_xxx()` 函数和 case 分支
-3. `src/import.rs`：添加对应的导入逻辑
+3. `src/import.rs`：添加对应的导入逻辑（如需原生发布协议，在 `src/registry.rs` 添加可单测的载荷构造函数）
 4. `tests/docker_e2e.rs`：添加工具可用性测试和下载测试
 5. `Dockerfile.downloader`：如需新工具，在 builder/runtime 阶段安装
 
@@ -409,18 +437,18 @@ Continue download anyway? [y/N]
 Docker 只在下载阶段使用（联网机器）。导入阶段通过 HTTP 直接上传到 Nexus。
 
 **Q: 传递依赖怎么处理？**
-各包管理器原生解析：
-- Maven：`mvn dependency:get`（只下载依赖本身和传递依赖，不拉 Maven 插件）
-- npm：`npm install`
-- PyPI：`pip download`
-- Cargo：`cargo fetch` + `cargo vendor`
+各包管理器原生解析，下载时获取完整依赖树，导入时**逐个**上传（包含所有传递依赖）：
+- Maven：`mvn dependency:get -Dtransitive=true`，拷贝本地仓库整体上传
+- npm：`npm install` 解析依赖树，对树中每个包 `npm pack` 取真实 tarball
+- PyPI：`pip download`（含传递依赖）
+- Cargo：`cargo fetch` 拉取整个依赖图，从本地 registry 缓存拷贝真实 `.crate` + 保存 crates.io sparse-index 元数据
 - Conan：`conan install`
 
 **Q: Maven SNAPSHOT 版本怎么处理？**
 版本号包含 `-SNAPSHOT` 的自动发到 `maven_snapshots` 仓库（如果配置了），否则也发到 `maven` 仓库。
 
 **Q: Cargo/Conan 在 Nexus 里不支持怎么办？**
-使用 raw 仓库兜底。如果 Nexus 有 Cargo/Conan 支持（Pro 版或插件），在 `config.toml` 中调整仓库名即可。
+Nexus 3.74+ 原生支持 Cargo（sparse 协议），在 `config.toml` 配置 `cargo` 仓库名即可。若 Nexus 无 Cargo 支持，不配 `cargo`，将降级到 raw 仓库兜底（仅留存，`cargo` 客户端无法直接使用）。Conan 始终走 raw 兜底。
 
 **Q: 能下载同一包的多个版本吗？**
 可以，每个版本执行一次 `download`，各自生成独立目录。

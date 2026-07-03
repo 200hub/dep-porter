@@ -188,7 +188,10 @@ cargo = "cargo-hosted"
 raw = "raw-hosted"
 "#;
     let config: dep_porter::config::AppConfig = toml::from_str(toml_str).unwrap();
-    assert_eq!(config.repositories.maven_snapshots.as_deref(), Some("maven-snapshots"));
+    assert_eq!(
+        config.repositories.maven_snapshots.as_deref(),
+        Some("maven-snapshots")
+    );
     assert_eq!(config.repositories.cargo.as_deref(), Some("cargo-hosted"));
 }
 
@@ -280,7 +283,10 @@ fn test_collect_files_sorted() {
     fs::write(base.join("b.txt"), "b").unwrap();
 
     let files = dep_porter::util::collect_files_sorted(base).unwrap();
-    let names: Vec<_> = files.iter().map(|f| f.file_name().unwrap().to_str().unwrap()).collect();
+    let names: Vec<_> = files
+        .iter()
+        .map(|f| f.file_name().unwrap().to_str().unwrap())
+        .collect();
     assert_eq!(names, vec!["a.txt", "b.txt", "c.txt"]);
 }
 
@@ -325,7 +331,11 @@ fn test_docker_download_maven() {
     }
 
     let tmp = tempfile::tempdir().unwrap();
-    let spec = dep_porter::model::DepSpec::new(DepKind::Maven, "junit:junit".to_string(), "4.13.2".to_string());
+    let spec = dep_porter::model::DepSpec::new(
+        DepKind::Maven,
+        "junit:junit".to_string(),
+        "4.13.2".to_string(),
+    );
     dep_porter::docker::run_downloader(&spec, tmp.path()).expect("docker run should succeed");
 
     let repo_dir = tmp.path().join("repository");
@@ -342,7 +352,8 @@ fn test_docker_download_npm() {
     }
 
     let tmp = tempfile::tempdir().unwrap();
-    let spec = dep_porter::model::DepSpec::new(DepKind::Npm, "lodash".to_string(), "4.17.21".to_string());
+    let spec =
+        dep_porter::model::DepSpec::new(DepKind::Npm, "lodash".to_string(), "4.17.21".to_string());
     dep_porter::docker::run_downloader(&spec, tmp.path()).expect("docker run should succeed");
 
     let files = dep_porter::util::collect_files(tmp.path()).unwrap();
@@ -357,7 +368,11 @@ fn test_docker_download_pypi() {
     }
 
     let tmp = tempfile::tempdir().unwrap();
-    let spec = dep_porter::model::DepSpec::new(DepKind::Pypi, "requests".to_string(), "2.32.3".to_string());
+    let spec = dep_porter::model::DepSpec::new(
+        DepKind::Pypi,
+        "requests".to_string(),
+        "2.32.3".to_string(),
+    );
     dep_porter::docker::run_downloader(&spec, tmp.path()).expect("docker run should succeed");
 
     let packages_dir = tmp.path().join("packages");
@@ -367,52 +382,469 @@ fn test_docker_download_pypi() {
 }
 
 // ── Nexus E2E tests (opt-in: RUN_NEXUS_E2E=1) ───────────────────────
+//
+// These tests publish artifacts to a *live* Nexus and verify that they are
+// retrievable in the correct native format (i.e. actually usable by the
+// corresponding package manager). They use the real `config.toml` in the
+// project root by default, or `NEXUS_*` environment variables as an override.
+//
+// Enable with:
+//   RUN_NEXUS_E2E=1 cargo test --test e2e -- --test-threads=1
+//
+// The default `config.toml` points at http://localhost:8081 with repositories
+// named maven-releases / npm / pypi / cargo / raw.
 
-fn nexus_e2e_config() -> Option<dep_porter::config::AppConfig> {
+use dep_porter::config::{AppConfig, NexusConfig, RepositoryConfig};
+use dep_porter::model::DepSpec;
+
+/// Load the Nexus configuration for E2E tests, preferring `NEXUS_*` env vars and
+/// falling back to the project's `config.toml`.
+fn nexus_e2e_config() -> Option<AppConfig> {
     if std::env::var("RUN_NEXUS_E2E").unwrap_or_default() != "1" {
         return None;
     }
 
-    let base_url = std::env::var("NEXUS_BASE_URL").ok()?;
-    let username = std::env::var("NEXUS_USERNAME").ok()?;
-    let password = std::env::var("NEXUS_PASSWORD").ok()?;
-    let maven_repo = std::env::var("NEXUS_MAVEN_REPO").unwrap_or_else(|_| "maven-releases".to_string());
-    let raw_repo = std::env::var("NEXUS_RAW_REPO").unwrap_or_else(|_| "raw-hosted".to_string());
-    let maven_snapshots = std::env::var("NEXUS_MAVEN_SNAPSHOTS_REPO").ok();
-    let cargo_repo = std::env::var("NEXUS_CARGO_REPO").ok();
+    // Env-var override (keeps the historical behaviour working).
+    if let (Ok(base_url), Ok(username), Ok(password)) = (
+        std::env::var("NEXUS_BASE_URL"),
+        std::env::var("NEXUS_USERNAME"),
+        std::env::var("NEXUS_PASSWORD"),
+    ) {
+        return Some(AppConfig {
+            nexus: NexusConfig {
+                base_url,
+                username,
+                password,
+            },
+            repositories: RepositoryConfig {
+                maven: std::env::var("NEXUS_MAVEN_REPO")
+                    .unwrap_or_else(|_| "maven-releases".into()),
+                maven_snapshots: std::env::var("NEXUS_MAVEN_SNAPSHOTS_REPO").ok(),
+                npm: std::env::var("NEXUS_NPM_REPO").unwrap_or_else(|_| "npm".into()),
+                pypi: std::env::var("NEXUS_PYPI_REPO").unwrap_or_else(|_| "pypi".into()),
+                cargo: std::env::var("NEXUS_CARGO_REPO")
+                    .ok()
+                    .or_else(|| Some("cargo".into())),
+                raw: std::env::var("NEXUS_RAW_REPO").unwrap_or_else(|_| "raw".into()),
+            },
+        });
+    }
 
-    Some(dep_porter::config::AppConfig {
-        nexus: dep_porter::config::NexusConfig {
-            base_url,
-            username,
-            password,
-        },
-        repositories: dep_porter::config::RepositoryConfig {
-            maven: maven_repo,
-            maven_snapshots,
-            npm: "npm-hosted".to_string(),
-            pypi: "pypi-hosted".to_string(),
-            cargo: cargo_repo,
-            raw: raw_repo,
-        },
-    })
+    // Fall back to the checked-in config.toml (a real, usable Nexus).
+    let config_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config.toml");
+    match AppConfig::from_file(&config_path) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            eprintln!("RUN_NEXUS_E2E=1 but could not load config.toml: {:#}", e);
+            None
+        }
+    }
 }
 
+/// A unique, monotonically-increasing version suffix so repeated test runs do
+/// not collide with already-published artifacts.
+fn unique_build_id() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        % 1_000_000
+}
+
+fn http() -> reqwest::blocking::Client {
+    reqwest::blocking::Client::new()
+}
+
+fn get_status(cfg: &AppConfig, url: &str) -> reqwest::StatusCode {
+    http()
+        .get(url)
+        .basic_auth(&cfg.nexus.username, Some(&cfg.nexus.password))
+        .send()
+        .expect("HTTP GET failed")
+        .status()
+}
+
+fn get_text(cfg: &AppConfig, url: &str) -> (reqwest::StatusCode, String) {
+    let resp = http()
+        .get(url)
+        .basic_auth(&cfg.nexus.username, Some(&cfg.nexus.password))
+        .send()
+        .expect("HTTP GET failed");
+    let status = resp.status();
+    (status, resp.text().unwrap_or_default())
+}
+
+// ── Fixture builders (produce the exact on-disk layout the importer expects) ──
+
+/// Write a gzipped tar (`.crate` / `.tgz`) from a list of (path, contents).
+fn write_targz(path: &Path, entries: &[(String, Vec<u8>)]) {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    let file = fs::File::create(path).unwrap();
+    let enc = GzEncoder::new(file, Compression::default());
+    let mut builder = tar::Builder::new(enc);
+    for (name, data) in entries {
+        let mut header = tar::Header::new_gnu();
+        header.set_size(data.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, name, data.as_slice())
+            .unwrap();
+    }
+    builder.into_inner().unwrap().finish().unwrap();
+}
+
+/// Build a Cargo download fixture (`crates/` + `index/`) for a synthetic crate.
+/// `deps` is a list of `(dep_name, version_req)` recorded both in the crate's
+/// `Cargo.toml` and in the sidecar index metadata.
+fn make_cargo_crate(dir: &Path, name: &str, version: &str, deps: &[(&str, &str)]) {
+    let crates = dir.join("crates");
+    let index = dir.join("index");
+    fs::create_dir_all(&crates).unwrap();
+    fs::create_dir_all(&index).unwrap();
+
+    let mut cargo_toml = format!(
+        "[package]\nname = \"{}\"\nversion = \"{}\"\nedition = \"2021\"\ndescription = \"dep-porter e2e\"\nlicense = \"MIT\"\n",
+        name, version
+    );
+    if !deps.is_empty() {
+        cargo_toml.push_str("\n[dependencies]\n");
+        for (d, req) in deps {
+            cargo_toml.push_str(&format!("{} = \"{}\"\n", d, req));
+        }
+    }
+
+    let top = format!("{}-{}", name, version);
+    write_targz(
+        &crates.join(format!("{}.crate", top)),
+        &[
+            (format!("{}/Cargo.toml", top), cargo_toml.into_bytes()),
+            (format!("{}/src/lib.rs", top), b"// e2e\n".to_vec()),
+        ],
+    );
+
+    let index_deps: Vec<serde_json::Value> = deps
+        .iter()
+        .map(|(d, req)| {
+            serde_json::json!({
+                "name": d, "req": req, "features": [],
+                "optional": false, "default_features": true,
+                "target": serde_json::Value::Null, "kind": "normal"
+            })
+        })
+        .collect();
+    let index_line = serde_json::json!({
+        "name": name, "vers": version, "deps": index_deps,
+        "cksum": "0".repeat(64), "features": {}, "yanked": false
+    });
+    fs::write(
+        index.join(format!("{}.json", top)),
+        serde_json::to_string(&index_line).unwrap(),
+    )
+    .unwrap();
+}
+
+/// Build an npm download fixture (`tarballs/`) for a synthetic package.
+fn make_npm_tarball(dir: &Path, name: &str, version: &str, deps: &[(&str, &str)]) {
+    let tarballs = dir.join("tarballs");
+    fs::create_dir_all(&tarballs).unwrap();
+
+    let mut pkg = serde_json::json!({
+        "name": name,
+        "version": version,
+        "description": "dep-porter e2e",
+        "main": "index.js",
+        "license": "MIT",
+    });
+    if !deps.is_empty() {
+        let mut map = serde_json::Map::new();
+        for (d, req) in deps {
+            map.insert((*d).to_string(), serde_json::json!(req));
+        }
+        pkg["dependencies"] = serde_json::Value::Object(map);
+    }
+
+    write_targz(
+        &tarballs.join(format!("{}-{}.tgz", name, version)),
+        &[
+            (
+                "package/package.json".to_string(),
+                serde_json::to_vec(&pkg).unwrap(),
+            ),
+            (
+                "package/index.js".to_string(),
+                b"module.exports = 1;\n".to_vec(),
+            ),
+        ],
+    );
+}
+
+/// A minimal but valid (empty) ZIP file — usable as a Maven `.jar` even when
+/// strict content-type validation is enabled.
+fn empty_zip() -> Vec<u8> {
+    // End-of-central-directory record for an empty archive.
+    vec![
+        0x50, 0x4b, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]
+}
+
+/// Build a Maven download fixture (`repository/` layout) for a synthetic artifact.
+fn make_maven_fixture(dir: &Path, group: &str, artifact: &str, version: &str) {
+    let group_path = group.replace('.', "/");
+    let art_dir = dir
+        .join("repository")
+        .join(&group_path)
+        .join(artifact)
+        .join(version);
+    fs::create_dir_all(&art_dir).unwrap();
+
+    fs::write(
+        art_dir.join(format!("{}-{}.jar", artifact, version)),
+        empty_zip(),
+    )
+    .unwrap();
+    let pom = format!(
+        "<project>\n<modelVersion>4.0.0</modelVersion>\n<groupId>{}</groupId>\n<artifactId>{}</artifactId>\n<version>{}</version>\n</project>\n",
+        group, artifact, version
+    );
+    fs::write(
+        art_dir.join(format!("{}-{}.pom", artifact, version)),
+        pom.into_bytes(),
+    )
+    .unwrap();
+}
+
+// ── Cargo: publish + verify usable via the sparse index & download endpoint ──
+
 #[test]
-fn test_nexus_upload_raw_file() {
-    let config = match nexus_e2e_config() {
+fn test_e2e_cargo_publish_and_resolve() {
+    let cfg = match nexus_e2e_config() {
         Some(c) => c,
         None => {
-            eprintln!("Skipping Nexus E2E test (set RUN_NEXUS_E2E=1 and NEXUS_* env vars to enable)");
+            eprintln!("SKIP: set RUN_NEXUS_E2E=1 (and provide config.toml or NEXUS_* env)");
             return;
         }
     };
+    let cargo_repo = cfg
+        .repositories
+        .cargo
+        .clone()
+        .expect("config must define a cargo repository for this test");
+    let base = cfg.nexus.base_url.trim_end_matches('/').to_string();
+
+    let id = unique_build_id();
+    let dep_name = format!("dpe2e-cargo-dep-{}", id);
+    let root_name = format!("dpe2e-cargo-{}", id);
+    let version = "0.0.1";
 
     let tmp = tempfile::tempdir().unwrap();
-    let test_file = tmp.path().join("test-upload.txt");
-    fs::write(&test_file, "dep-porter test upload").unwrap();
+    let dl = tmp
+        .path()
+        .join(build_dir_name(DepKind::Cargo, &root_name, version));
+    // Root crate depends on the leaf crate — verifies transitive metadata.
+    make_cargo_crate(&dl, &dep_name, version, &[]);
+    make_cargo_crate(
+        &dl,
+        &root_name,
+        version,
+        &[(&dep_name, &format!("={}", version))],
+    );
 
-    let spec = dep_porter::model::DepSpec::new(DepKind::Cargo, "test-pkg".to_string(), "0.1.0".to_string());
-    dep_porter::import::import_to_nexus(&spec, tmp.path(), &config, false)
-        .expect("Nexus raw upload should succeed");
+    let spec = DepSpec::new(DepKind::Cargo, root_name.clone(), version.to_string());
+    dep_porter::import::import_to_nexus(&spec, &dl, &cfg, true)
+        .expect("cargo publish to Nexus should succeed");
+
+    // Both crates must be downloadable via the Cargo download endpoint.
+    for name in [&dep_name, &root_name] {
+        let url = format!(
+            "{}/repository/{}/crates/{}/{}/download",
+            base, cargo_repo, name, version
+        );
+        assert!(
+            get_status(&cfg, &url).is_success(),
+            "crate {} must be downloadable at {}",
+            name,
+            url
+        );
+    }
+
+    // The root crate's sparse-index entry must list the version and its dep.
+    let idx_url = format!(
+        "{}/repository/{}/{}",
+        base,
+        cargo_repo,
+        dep_porter::registry::cargo_sparse_index_path(&root_name)
+    );
+    let (status, body) = get_text(&cfg, &idx_url);
+    assert!(
+        status.is_success(),
+        "sparse index for {} missing",
+        root_name
+    );
+    assert!(
+        body.contains(&format!("\"vers\":\"{}\"", version)),
+        "index missing version: {}",
+        body
+    );
+    assert!(
+        body.contains(&dep_name),
+        "index missing transitive dependency {}: {}",
+        dep_name,
+        body
+    );
+}
+
+// ── npm: publish + verify usable via the packument & tarball endpoint ────────
+
+#[test]
+fn test_e2e_npm_publish_and_resolve() {
+    let cfg = match nexus_e2e_config() {
+        Some(c) => c,
+        None => {
+            eprintln!("SKIP: set RUN_NEXUS_E2E=1 (and provide config.toml or NEXUS_* env)");
+            return;
+        }
+    };
+    let npm_repo = cfg.repositories.npm.clone();
+    let base = cfg.nexus.base_url.trim_end_matches('/').to_string();
+
+    let id = unique_build_id();
+    let dep_name = format!("dpe2e-npm-dep-{}", id);
+    let root_name = format!("dpe2e-npm-{}", id);
+    let version = "1.0.0";
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dl = tmp
+        .path()
+        .join(build_dir_name(DepKind::Npm, &root_name, version));
+    make_npm_tarball(&dl, &dep_name, version, &[]);
+    make_npm_tarball(&dl, &root_name, version, &[(&dep_name, version)]);
+
+    let spec = DepSpec::new(DepKind::Npm, root_name.clone(), version.to_string());
+    dep_porter::import::import_to_nexus(&spec, &dl, &cfg, true)
+        .expect("npm publish to Nexus should succeed");
+
+    // The packument must list the version and record the dependency.
+    let packument_url = format!("{}/repository/{}/{}", base, npm_repo, root_name);
+    let (status, body) = get_text(&cfg, &packument_url);
+    assert!(status.is_success(), "packument for {} missing", root_name);
+    let doc: serde_json::Value = serde_json::from_str(&body).expect("packument is JSON");
+    assert!(
+        doc["versions"].get(version).is_some(),
+        "packument missing version {}: {}",
+        version,
+        body
+    );
+    assert_eq!(
+        doc["versions"][version]["dependencies"][&dep_name], version,
+        "packument missing dependency mapping"
+    );
+
+    // The tarball recorded in dist must be downloadable.
+    let tarball_url = doc["versions"][version]["dist"]["tarball"]
+        .as_str()
+        .expect("dist.tarball present");
+    assert!(
+        get_status(&cfg, tarball_url).is_success(),
+        "tarball not retrievable at {}",
+        tarball_url
+    );
+}
+
+// ── Maven: publish + verify the artifact is retrievable ──────────────────────
+
+#[test]
+fn test_e2e_maven_publish_and_resolve() {
+    let cfg = match nexus_e2e_config() {
+        Some(c) => c,
+        None => {
+            eprintln!("SKIP: set RUN_NEXUS_E2E=1 (and provide config.toml or NEXUS_* env)");
+            return;
+        }
+    };
+    let maven_repo = cfg.repositories.maven.clone();
+    let base = cfg.nexus.base_url.trim_end_matches('/').to_string();
+
+    let id = unique_build_id();
+    let group = "io.depporter.e2e";
+    let artifact = format!("probe-{}", id);
+    let version = "0.0.1";
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dl = tmp.path().join(build_dir_name(
+        DepKind::Maven,
+        &format!("{}:{}", group, artifact),
+        version,
+    ));
+    make_maven_fixture(&dl, group, &artifact, version);
+
+    let spec = DepSpec::new(
+        DepKind::Maven,
+        format!("{}:{}", group, artifact),
+        version.to_string(),
+    );
+    dep_porter::import::import_to_nexus(&spec, &dl, &cfg, true)
+        .expect("maven upload to Nexus should succeed");
+
+    let jar_url = format!(
+        "{}/repository/{}/{}/{}/{}/{}-{}.jar",
+        base,
+        maven_repo,
+        group.replace('.', "/"),
+        artifact,
+        version,
+        artifact,
+        version
+    );
+    assert!(
+        get_status(&cfg, &jar_url).is_success(),
+        "maven jar not retrievable at {}",
+        jar_url
+    );
+}
+
+// ── Conan / raw fallback: publish + verify retrievable ───────────────────────
+
+#[test]
+fn test_e2e_raw_upload() {
+    let cfg = match nexus_e2e_config() {
+        Some(c) => c,
+        None => {
+            eprintln!("SKIP: set RUN_NEXUS_E2E=1 (and provide config.toml or NEXUS_* env)");
+            return;
+        }
+    };
+    let raw_repo = cfg.repositories.raw.clone();
+    let base = cfg.nexus.base_url.trim_end_matches('/').to_string();
+
+    let id = unique_build_id();
+    let name = format!("zlib-{}", id);
+    let version = "1.2.13";
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dl = tmp
+        .path()
+        .join(build_dir_name(DepKind::Conan, &name, version));
+    fs::create_dir_all(&dl).unwrap();
+    fs::write(
+        dl.join("conanfile.txt"),
+        format!("[requires]\n{}/{}\n", name, version),
+    )
+    .unwrap();
+
+    let spec = DepSpec::new(DepKind::Conan, name.clone(), version.to_string());
+    dep_porter::import::import_to_nexus(&spec, &dl, &cfg, true)
+        .expect("conan/raw upload to Nexus should succeed");
+
+    let url = format!(
+        "{}/repository/{}/conan/{}/{}/conanfile.txt",
+        base, raw_repo, name, version
+    );
+    assert!(
+        get_status(&cfg, &url).is_success(),
+        "raw artifact not retrievable at {}",
+        url
+    );
 }

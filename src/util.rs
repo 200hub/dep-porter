@@ -4,14 +4,14 @@ use walkdir::WalkDir;
 
 use crate::model::{DepError, DepKind};
 
-/// The default Docker image name for the downloader.
+/// 下载器的默认Docker镜像名称。
 pub const DOWNLOADER_IMAGE: &str = "dep-downloader:latest";
 
-/// Build a safe directory name from a dependency specification.
+/// 从依赖规范构建安全的目录名称。
 ///
-/// Format: `{kind}_{safe_name}_{version}`
+/// 格式：`{kind}_{safe_name}_{version}`
 ///
-/// `safe_name` replaces `/`, `:`, `@`, `\` with `_`.
+/// `safe_name`将`/`、`:`、`@`、`\`替换为`_`。
 pub fn build_dir_name(kind: DepKind, name: &str, version: &str) -> String {
     let safe_name = name
         .replace('/', "_")
@@ -21,10 +21,10 @@ pub fn build_dir_name(kind: DepKind, name: &str, version: &str) -> String {
     format!("{}_{}_{}", kind.as_str(), safe_name, version)
 }
 
-/// Convert a Windows host path to a Docker-compatible mount path.
+/// 将Windows主机路径转换为Docker兼容的挂载路径。
 ///
-/// On Windows, `C:\Users\foo` becomes `/c/Users/foo`.
-/// On Linux/macOS, the path is returned as-is.
+/// 在Windows上，`C:\Users\foo`变为`/c/Users/foo`。
+/// 在Linux/macOS上，路径原样返回。
 pub fn to_docker_mount_path(path: &Path) -> String {
     let s = path.to_string_lossy().to_string();
     if cfg!(target_os = "windows") {
@@ -38,7 +38,7 @@ pub fn to_docker_mount_path(path: &Path) -> String {
     s
 }
 
-/// Collect all files recursively under a directory.
+/// 递归收集目录下的所有文件。
 pub fn collect_files(dir: &Path) -> Result<Vec<PathBuf>, DepError> {
     if !dir.exists() {
         return Err(DepError::DownloadDirNotFound(dir.display().to_string()));
@@ -52,14 +52,14 @@ pub fn collect_files(dir: &Path) -> Result<Vec<PathBuf>, DepError> {
     Ok(files)
 }
 
-/// Collect all files recursively and return them sorted.
+/// 递归收集所有文件并返回排序后的结果。
 pub fn collect_files_sorted(dir: &Path) -> Result<Vec<PathBuf>, DepError> {
     let mut files = collect_files(dir)?;
     files.sort();
     Ok(files)
 }
 
-/// Compute the relative path of a file with respect to a base directory.
+/// 计算文件相对于基础目录的相对路径。
 pub fn relative_path<'a>(base: &'a Path, file: &'a Path) -> Option<&'a Path> {
     file.strip_prefix(base).ok()
 }

@@ -5,14 +5,14 @@ use serde::Deserialize;
 
 use crate::model::DepError;
 
-/// Top-level configuration read from a TOML file.
+/// 从TOML文件读取的顶级配置。
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub nexus: NexusConfig,
     pub repositories: RepositoryConfig,
 }
 
-/// Nexus connection settings.
+/// Nexus连接设置。
 #[derive(Debug, Clone, Deserialize)]
 pub struct NexusConfig {
     pub base_url: String,
@@ -20,35 +20,35 @@ pub struct NexusConfig {
     pub password: String,
 }
 
-/// Repository name mappings for each dependency kind.
+/// 每种依赖类型的仓库名称映射。
 #[derive(Debug, Clone, Deserialize)]
 pub struct RepositoryConfig {
-    /// Maven hosted-releases repository name.
+    /// Maven托管发布仓库名称。
     pub maven: String,
-    /// Maven hosted-snapshots repository name (optional, falls back to maven).
+    /// Maven托管快照仓库名称（可选，回退到maven）。
     pub maven_snapshots: Option<String>,
-    /// npm hosted repository name.
+    /// npm托管仓库名称。
     pub npm: String,
-    /// PyPI hosted repository name.
+    /// PyPI托管仓库名称。
     pub pypi: String,
-    /// Cargo hosted repository name (optional, falls back to raw).
+    /// Cargo托管仓库名称（可选，回退到raw）。
     pub cargo: Option<String>,
-    /// Raw hosted repository name (fallback for cargo, conan).
+    /// 原始托管仓库名称（cargo、conan的回退选项）。
     pub raw: String,
 }
 
 impl AppConfig {
-    /// Load configuration from a TOML file.
+    /// 从TOML文件加载配置。
     pub fn from_file(path: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path).with_context(|| {
             format!(
-                "Cannot read config file '{}'. Make sure the file exists.",
+                "无法读取配置文件'{}'。请确保文件存在。",
                 path.display()
             )
         })?;
         let config: AppConfig = toml::from_str(&content).with_context(|| {
             format!(
-                "Failed to parse config file '{}'. Check TOML syntax.",
+                "解析配置文件'{}'失败。请检查TOML语法。",
                 path.display()
             )
         })?;
@@ -56,7 +56,7 @@ impl AppConfig {
         Ok(config)
     }
 
-    /// Validate that required fields are non-empty.
+    /// 验证必填字段是否非空。
     pub fn validate(&self) -> Result<()> {
         if self.nexus.base_url.is_empty() {
             return Err(DepError::ConfigError(
