@@ -313,14 +313,13 @@ fn docker_e2e_enabled() -> bool {
 }
 
 #[test]
-fn test_docker_build_image() {
+fn test_docker_pull_image() {
     if !docker_e2e_enabled() {
         eprintln!("Skipping Docker E2E test (set RUN_DOCKER_E2E=1 to enable)");
         return;
     }
 
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    dep_porter::docker::build_image(project_dir).expect("docker build should succeed");
+    dep_porter::docker::pull_image().expect("docker pull should succeed");
 }
 
 #[test]

@@ -49,17 +49,11 @@ cargo build --release
 
 产物：`target/release/dep-porter`（Windows: `target\release\dep-porter.exe`）
 
-### 2. 构建 Docker 下载器镜像
+> 也可以从 [GitHub Releases](https://github.com/gudaoxuri/dep-porter/releases) 下载预编译版本。
 
-```bash
-docker build -f Dockerfile.downloader -t dep-downloader:latest .
-```
+### 2. 外网下载（联网机器）
 
-镜像内置：OpenJDK 17 + Maven、Node.js 20 + npm、Python 3 + pip + twine、Rust + Cargo、Conan。
-
-> 首次构建需要下载约 500MB 依赖，之后利用 Docker 缓存会很快。镜像会自动使用阿里云 apt 镜像加速。
-
-### 3. 外网下载（联网机器）
+下载时会自动拉取 Docker 镜像 `gudaoxuri/dep-downloader:latest`。
 
 ```bash
 # Maven（正式版本）
@@ -86,7 +80,7 @@ dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --check-sec
 
 每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
 
-### 4. 拷贝到内网
+### 3. 拷贝到内网
 
 将以下内容拷贝到内网机器：
 
@@ -94,7 +88,7 @@ dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --check-sec
 2. 下载目录（如 `maven_org.apache.commons_commons-lang3_3.14.0/`）
 3. `config.toml` 配置文件
 
-### 5. 内网导入
+### 4. 内网导入
 
 创建 `config.toml`：
 
@@ -144,14 +138,20 @@ dep-porter/
 ├── Dockerfile.downloader     # Docker 下载器镜像（多阶段构建）
 ├── SKILL.md                  # LLM 使用指南
 ├── config.example.toml       # Nexus 配置示例
+├── .github/
+│   └── workflows/
+│       ├── docker-publish.yml  # GitHub Actions: Docker 镜像构建与发布
+│       └── build-release.yml   # GitHub Actions: 跨平台程序构建
 ├── scripts/
 │   └── download.sh           # 容器内下载脚本（Maven/npm/PyPI/Cargo/Conan）
 ├── src/
 │   ├── main.rs               # 入口
 │   ├── cli.rs                # clap 参数解析
 │   ├── config.rs             # TOML 配置读取
-│   ├── docker.rs             # Docker 调用 + 镜像自动构建
-│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）│   ├── registry.rs            # 原生发布载荷构造（Cargo publish / npm publish）│   ├── model.rs              # 数据类型定义
+│   ├── docker.rs             # Docker 调用 + 镜像自动拉取
+│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）
+│   ├── registry.rs           # 原生发布载荷构造（Cargo publish / npm publish）
+│   ├── model.rs              # 数据类型定义
 │   ├── security.rs           # SCA 安全检查（OSV.dev API）
 │   └── util.rs               # 工具函数（目录命名、路径转换）
 └── tests/
@@ -256,15 +256,13 @@ cargo test
 需要 Docker 环境：
 
 ```bash
-# 首次需要构建镜像（测试会自动构建，也可手动构建）
-docker build -f Dockerfile.downloader -t dep-downloader:latest .
-
 # 运行 Docker E2E 测试（覆盖 Maven/npm/PyPI/Cargo/Conan 全部 5 种类型）
+# 首次运行会自动拉取 gudaoxuri/dep-downloader:latest 镜像
 $env:RUN_DOCKER_E2E="1"   # PowerShell
 cargo test --test docker_e2e -- --test-threads=1
 ```
 
-测试内容：镜像构建、全部工具可用性（mvn/java/node/npm/python/pip/twine/cargo/rustc/conan）、每种依赖类型的下载功能、目录命名验证、错误处理。
+测试内容：镜像拉取、全部工具可用性（mvn/java/node/npm/python/pip/twine/cargo/rustc/conan）、每种依赖类型的下载功能、目录命名验证、错误处理。
 
 ### Nexus E2E 测试
 
@@ -376,6 +374,29 @@ docker rm -f nexus-test
 rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT config.toml
 ```
 
+## GitHub Actions
+
+项目配置了 GitHub Actions 自动化构建：
+
+### Docker 镜像发布
+
+当 `Dockerfile.downloader` 或 `scripts/download.sh` 有变更时，自动构建并发布到：
+- Docker Hub: `gudaoxuri/dep-downloader`
+- GitHub Container Registry: `ghcr.io/gudaoxuri/dep-porter/dep-downloader`
+
+支持手动触发（workflow_dispatch）。
+
+### 跨平台程序构建
+
+当 `Cargo.toml` 中的 version 变更时，自动构建以下平台的可执行文件：
+- Linux AMD64 / ARM64
+- Windows AMD64
+- macOS AMD64 / ARM64
+
+推送 `v*` 标签时自动创建 GitHub Release。
+
+支持手动触发（workflow_dispatch）。
+
 ## 开发指南
 
 ### 技术栈
@@ -389,7 +410,7 @@ rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT con
 
 ### 关键设计
 
-- **Docker 镜像自动构建**：运行 `download` 时如果 `dep-downloader:latest` 不存在，会自动搜索 `Dockerfile.downloader` 并构建
+- **Docker 镜像自动拉取**：运行 `download` 时如果 `gudaoxuri/dep-downloader:latest` 不存在，会自动从 Docker Hub 拉取
 - **Windows 路径兼容**：`to_docker_mount_path()` 自动将 `C:\...` 转换为 `/c/...` 供 Docker 挂载
 - **多阶段构建**：builder 阶段安装 pip 包和 Rust 工具链，runtime 阶段通过 apt 安装 JDK/Maven/Node，利用缓存加速重建
 - **lib + bin 双 crate**：`src/lib.rs` 导出公共模块，`src/main.rs` 作为入口，测试可直接 import 库模块

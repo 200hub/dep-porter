@@ -77,16 +77,15 @@ fn list_files_relative(base: &Path) -> Vec<String> {
         .collect()
 }
 
-// ── 1. Image build test ───────────────────────────────────────────────────
+// ── 1. Image pull test ────────────────────────────────────────────────────
 
 #[test]
-fn docker_build_image() {
+fn docker_pull_image() {
     if !docker_e2e_enabled() {
         eprintln!("SKIP: set RUN_DOCKER_E2E=1 to enable");
         return;
     }
-    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    dep_porter::docker::build_image(project_dir).expect("docker build should succeed");
+    dep_porter::docker::pull_image().expect("docker pull should succeed");
 }
 
 // ── 2. Tool availability tests ────────────────────────────────────────────

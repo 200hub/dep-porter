@@ -5,7 +5,7 @@ use walkdir::WalkDir;
 use crate::model::{DepError, DepKind};
 
 /// 下载器的默认Docker镜像名称。
-pub const DOWNLOADER_IMAGE: &str = "dep-downloader:latest";
+pub const DOWNLOADER_IMAGE: &str = "gudaoxuri/dep-downloader:latest";
 
 /// 从依赖规范构建安全的目录名称。
 ///

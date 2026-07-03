@@ -1,9 +1,8 @@
-use std::env;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use log::{info, warn};
+use log::info;
 
 use crate::model::{DepError, DepSpec};
 use crate::util::{to_docker_mount_path, DOWNLOADER_IMAGE};
@@ -25,91 +24,26 @@ pub fn image_exists() -> bool {
         .unwrap_or(false)
 }
 
-/// 在磁盘上定位`Dockerfile.downloader`。
-///
-/// 搜索顺序：
-///   1. 当前工作目录
-///   2. 当前可执行文件的父目录
-///   3. 从当前工作目录向上遍历查找
-fn find_dockerfile() -> Option<PathBuf> {
-    let candidates: Vec<PathBuf> = {
-        let mut v = Vec::new();
-        if let Ok(cwd) = env::current_dir() {
-            v.push(cwd.join("Dockerfile.downloader"));
-        }
-        if let Ok(exe) = env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                v.push(parent.join("Dockerfile.downloader"));
-            }
-        }
-        v
-    };
-
-    for c in &candidates {
-        if c.is_file() {
-            return Some(c.clone());
-        }
-    }
-
-    // 从当前工作目录向上遍历
-    if let Ok(mut dir) = env::current_dir() {
-        loop {
-            let candidate = dir.join("Dockerfile.downloader");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-            if !dir.pop() {
-                break;
-            }
-        }
-    }
-
-    None
-}
-
-/// 从Dockerfile.downloader构建下载器Docker镜像。
-///
-/// 在当前目录、可执行文件的父目录以及向上遍历目录树时搜索`Dockerfile.downloader`。
-pub fn build_image(dockerfile_dir: &Path) -> Result<()> {
-    let dockerfile = dockerfile_dir.join("Dockerfile.downloader");
-    if !dockerfile.is_file() {
-        return Err(anyhow::anyhow!(
-            "在{}中未找到Dockerfile.downloader",
-            dockerfile_dir.display()
-        ));
-    }
-
-    info!(
-        "正在从{}构建Docker镜像{} ...",
-        dockerfile.display(),
-        DOWNLOADER_IMAGE
-    );
+/// 从远程仓库拉取下载器镜像。
+pub fn pull_image() -> Result<()> {
+    info!("正在拉取Docker镜像{} ...", DOWNLOADER_IMAGE);
 
     let status = Command::new("docker")
-        .args([
-            "build",
-            "-f",
-            &dockerfile.to_string_lossy(),
-            "-t",
-            DOWNLOADER_IMAGE,
-            ".",
-        ])
-        .current_dir(dockerfile_dir)
+        .args(["pull", DOWNLOADER_IMAGE])
         .status()
-        .context("执行docker build失败")?;
+        .context("执行docker pull失败")?;
 
     if !status.success() {
         return Err(
-            DepError::DockerCommandFailed("docker build失败".to_string()).into()
+            DepError::DockerCommandFailed(format!("docker pull {}失败", DOWNLOADER_IMAGE)).into()
         );
     }
 
-    info!("Docker镜像{}构建成功。", DOWNLOADER_IMAGE);
+    info!("Docker镜像{}拉取成功。", DOWNLOADER_IMAGE);
     Ok(())
 }
 
-/// 确保下载器镜像可用。如果不存在，
-/// 尝试定位`Dockerfile.downloader`并自动构建。
+/// 确保下载器镜像可用。如果不存在，则从远程仓库拉取。
 pub fn ensure_image() -> Result<()> {
     ensure_docker_installed()?;
 
@@ -117,26 +51,12 @@ pub fn ensure_image() -> Result<()> {
         return Ok(());
     }
 
-    warn!(
-        "未找到Docker镜像'{}'。尝试自动构建...",
-        DOWNLOADER_IMAGE
-    );
-
-    let dockerfile_dir = find_dockerfile().ok_or_else(|| {
-        DepError::DockerImageNotFound(DOWNLOADER_IMAGE.to_string())
-    })?;
-
-    let dir = dockerfile_dir
-        .parent()
-        .unwrap_or(&dockerfile_dir)
-        .to_path_buf();
-
-    build_image(&dir)
+    pull_image()
 }
 
 /// 运行下载器容器以下载依赖项。
 ///
-/// 如果Docker镜像不存在，将自动从`Dockerfile.downloader`构建。
+/// 如果Docker镜像不存在，将自动从远程仓库拉取。
 pub fn run_downloader(spec: &DepSpec, output_dir: &Path) -> Result<()> {
     ensure_image()?;
 
