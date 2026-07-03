@@ -47,11 +47,23 @@
 
 | 平台 | 文件 |
 |------|------|
-| Linux x86_64 | `dep-porter-linux-amd64` |
-| Linux ARM64 | `dep-porter-linux-arm64` |
-| Windows x86_64 | `dep-porter-windows-amd64.exe` |
-| macOS x86_64 | `dep-porter-macos-amd64` |
-| macOS ARM64 | `dep-porter-macos-arm64` |
+| Linux x86_64 | `dep-porter-linux-amd64.tar.gz` |
+| Linux ARM64 | `dep-porter-linux-arm64.tar.gz` |
+| Windows x86_64 | `dep-porter-windows-amd64.zip` |
+| macOS x86_64 | `dep-porter-macos-amd64.tar.gz` |
+| macOS ARM64 | `dep-porter-macos-arm64.tar.gz` |
+
+解压后得到 `dep-porter`（Windows 为 `dep-porter.exe`）。
+
+```bash
+# Linux/macOS
+tar -xzf dep-porter-linux-amd64.tar.gz
+./dep-porter --help
+
+# Windows (PowerShell)
+Expand-Archive dep-porter-windows-amd64.zip
+.\dep-porter.exe --help
+```
 
 ### 2. 外网下载（联网机器）
 
@@ -324,13 +336,6 @@ cargo build --release
 ```
 
 产物：`target/release/dep-porter`（Windows: `target\release\dep-porter.exe`）
-
-### 关键设计
-
-- **Docker 镜像自动拉取**：运行 `download` 时如果 `gudaoxuri/dep-downloader:latest` 不存在，会自动从 Docker Hub 拉取
-- **Windows 路径兼容**：`to_docker_mount_path()` 自动将 `C:\...` 转换为 `/c/...` 供 Docker 挂载
-- **多阶段构建**：builder 阶段安装 pip 包和 Rust 工具链，runtime 阶段通过 apt 安装 JDK/Maven/Node，利用缓存加速重建
-- **lib + bin 双 crate**：`src/lib.rs` 导出公共模块，`src/main.rs` 作为入口，测试可直接 import 库模块
 
 ### 添加新的依赖类型
 
