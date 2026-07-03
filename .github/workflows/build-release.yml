@@ -7,12 +7,6 @@ on:
       - master
     paths:
       - 'Cargo.toml'
-  pull_request:
-    branches:
-      - main
-      - master
-    paths:
-      - 'Cargo.toml'
   workflow_dispatch:
 
 env:
@@ -23,36 +17,34 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      changed: ${{ steps.version.outputs.changed }}
+      needs_release: ${{ steps.version.outputs.needs_release }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Extract version from Cargo.toml
+      - name: Check if release exists for current version
         id: version
         run: |
+          # Extract version from Cargo.toml
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
           
-          # Check if version changed in this commit
-          if [ "${{ github.event_name }}" = "push" ]; then
-            PREV_VERSION=$(git show HEAD~1:Cargo.toml 2>/dev/null | grep '^version' | head -1 | sed 's/.*"\(.*\)".*/\1/' || echo "")
-            if [ "$VERSION" != "$PREV_VERSION" ]; then
-              echo "changed=true" >> $GITHUB_OUTPUT
-            else
-              echo "changed=false" >> $GITHUB_OUTPUT
-            fi
+          # Check if tag v{version} exists
+          TAG_NAME="v${VERSION}"
+          if git rev-parse "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Tag $TAG_NAME already exists, release not needed"
+            echo "needs_release=false" >> $GITHUB_OUTPUT
           else
-            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG_NAME does not exist, release needed"
+            echo "needs_release=true" >> $GITHUB_OUTPUT
           fi
-          
-          echo "Version: $VERSION"
 
   build:
     needs: check-version
-    if: needs.check-version.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
+    if: needs.check-version.outputs.needs_release == 'true' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -113,7 +105,7 @@ jobs:
 
   create-release:
     needs: [check-version, build]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.check-version.outputs.needs_release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -121,6 +113,78 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get previous tag
+        id: previoustag
+        run: |
+          # Get the previous tag (the one before the current version)
+          CURRENT_VERSION="${{ needs.check-version.outputs.version }}"
+          PREVIOUS_TAG=$(git tag --sort=-creatordate | grep '^v' | grep -v "v${CURRENT_VERSION}" | head -1)
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # If no previous tag, use the first commit
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD | head -1)
+            echo "No previous tag found, using first commit: $PREVIOUS_TAG"
+          else
+            echo "Previous tag: $PREVIOUS_TAG"
+          fi
+          echo "tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          CURRENT_VERSION="${{ needs.check-version.outputs.version }}"
+          TAG_NAME="v${CURRENT_VERSION}"
+          PREVIOUS_TAG="${{ steps.previoustag.outputs.tag }}"
+          
+          echo "Generating release notes from $PREVIOUS_TAG to $TAG_NAME"
+          
+          # Generate changelog from commits between tags
+          {
+            echo "## What's Changed"
+            echo ""
+            
+            # Get commits between tags with format: hash | author | subject
+            if [ "$PREVIOUS_TAG" != "$(git rev-list --max-parents=0 HEAD | head -1)" ]; then
+              git log "${PREVIOUS_TAG}..HEAD" --pretty=format:"* %s (%h)" --no-merges 2>/dev/null || {
+                git log HEAD --pretty=format:"* %s (%h)" --no-merges -20
+              }
+            else
+              git log HEAD --pretty=format:"* %s (%h)" --no-merges -20
+            fi
+            
+            echo ""
+            echo ""
+            echo "## Downloads"
+            echo ""
+            echo "| Platform | Architecture | File |"
+            echo "|----------|--------------|------|"
+            echo "| Linux | x86_64 | \`dep-porter-linux-amd64\` |"
+            echo "| Linux | aarch64 | \`dep-porter-linux-arm64\` |"
+            echo "| Windows | x86_64 | \`dep-porter-windows-amd64.exe\` |"
+            echo "| macOS | x86_64 | \`dep-porter-macos-amd64\` |"
+            echo "| macOS | aarch64 | \`dep-porter-macos-arm64\` |"
+            echo ""
+            echo ""
+            echo "## Docker Image"
+            echo ""
+            echo "\`\`\`bash"
+            echo "docker pull gudaoxuri/dep-downloader:latest"
+            echo "\`\`\`"
+            echo ""
+            echo ""
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${TAG_NAME}"
+          } > release_notes.md
+          
+          echo "Release notes generated:"
+          cat release_notes.md
+
+      - name: Create tag
+        run: |
+          TAG_NAME="v${{ needs.check-version.outputs.version }}"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -130,8 +194,9 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
+          tag_name: v${{ needs.check-version.outputs.version }}
           name: Release ${{ needs.check-version.outputs.version }}
+          body_path: release_notes.md
           draft: false
           prerelease: false
           files: |
