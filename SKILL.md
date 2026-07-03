@@ -22,11 +22,13 @@ Download pre-built binaries from [GitHub Releases](https://github.com/gudaoxuri/
 
 | Platform | File |
 |----------|------|
-| Linux x86_64 | `dep-porter-linux-amd64` |
-| Linux ARM64 | `dep-porter-linux-arm64` |
-| Windows x86_64 | `dep-porter-windows-amd64.exe` |
-| macOS x86_64 | `dep-porter-macos-amd64` |
-| macOS ARM64 | `dep-porter-macos-arm64` |
+| Linux x86_64 | `dep-porter-linux-amd64.tar.gz` |
+| Linux ARM64 | `dep-porter-linux-arm64.tar.gz` |
+| Windows x86_64 | `dep-porter-windows-amd64.zip` |
+| macOS x86_64 | `dep-porter-macos-amd64.tar.gz` |
+| macOS ARM64 | `dep-porter-macos-arm64.tar.gz` |
+
+Each archive contains the `dep-porter` binary (or `dep-porter.exe` on Windows).
 
 ## Quick reference
 
@@ -36,6 +38,26 @@ dep-porter download --kind <kind> --name <name> --version <ver> [--check-securit
 
 # Import (air-gapped machine, reads config.toml from cwd by default)
 dep-porter import --kind <kind> --name <name> --version <ver> [--overwrite]
+```
+
+## Mirror configuration
+
+Download uses Chinese mirrors by default for faster speeds. Override via environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAVEN_MIRROR` | `https://maven.aliyun.com/repository/central` | Maven central mirror |
+| `NPM_MIRROR` | `https://registry.npmmirror.com` | npm registry mirror |
+| `PYPI_MIRROR` | `https://mirrors.aliyun.com/pypi/simple` | PyPI mirror |
+| `CARGO_MIRROR` | `https://mirrors.ustc.edu.cn/crates.io-index` | Cargo crates.io mirror |
+
+```bash
+# Use official mirrors (for overseas servers)
+MAVEN_MIRROR=https://repo1.maven.org/maven2 \
+NPM_MIRROR=https://registry.npmjs.org \
+PYPI_MIRROR=https://pypi.org/simple \
+CARGO_MIRROR=https://index.crates.io \
+dep-porter download --kind maven --name junit:junit --version 4.13.2
 ```
 
 ## Dependency name format

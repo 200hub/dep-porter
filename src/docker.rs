@@ -1,3 +1,4 @@
+use std::env;
 use std::path::Path;
 use std::process::Command;
 
@@ -6,6 +7,14 @@ use log::info;
 
 use crate::model::{DepError, DepSpec};
 use crate::util::{to_docker_mount_path, DOWNLOADER_IMAGE};
+
+/// 需要传递到 Docker 容器的镜像源环境变量
+const MIRROR_ENV_VARS: &[&str] = &[
+    "MAVEN_MIRROR",
+    "NPM_MIRROR",
+    "PYPI_MIRROR",
+    "CARGO_MIRROR",
+];
 
 /// 检查Docker是否已安装且在PATH中可用。
 pub fn ensure_docker_installed() -> Result<()> {
@@ -57,6 +66,7 @@ pub fn ensure_image() -> Result<()> {
 /// 运行下载器容器以下载依赖项。
 ///
 /// 如果Docker镜像不存在，将自动从远程仓库拉取。
+/// 会自动将宿主机的镜像源环境变量传递到容器中。
 pub fn run_downloader(spec: &DepSpec, output_dir: &Path) -> Result<()> {
     ensure_image()?;
 
@@ -66,27 +76,35 @@ pub fn run_downloader(spec: &DepSpec, output_dir: &Path) -> Result<()> {
     );
 
     let kind_str = spec.kind.as_str();
-    let args = [
-        "run",
-        "--rm",
-        "-v",
-        &mount_arg,
+
+    // 构建 docker run 命令
+    let mut cmd = Command::new("docker");
+    cmd.args(["run", "--rm", "-v", &mount_arg]);
+
+    // 传递镜像源环境变量到容器
+    for var in MIRROR_ENV_VARS {
+        if let Ok(val) = env::var(var) {
+            if !val.is_empty() {
+                cmd.args(["-e", &format!("{}={}", var, val)]);
+                info!("传递环境变量: {}={}", var, val);
+            }
+        }
+    }
+
+    cmd.args([
         DOWNLOADER_IMAGE,
         kind_str,
         &spec.name,
         &spec.version,
         "/workspace/out",
-    ];
+    ]);
 
     info!(
         "正在运行: docker run --rm -v {} {} dep-download {} {} {} /workspace/out",
         mount_arg, DOWNLOADER_IMAGE, kind_str, spec.name, spec.version
     );
 
-    let status = Command::new("docker")
-        .args(&args)
-        .status()
-        .context("执行docker run失败")?;
+    let status = cmd.status().context("执行docker run失败")?;
 
     if !status.success() {
         return Err(DepError::DockerCommandFailed(format!(

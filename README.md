@@ -94,6 +94,33 @@ dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --check-sec
 
 每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
 
+#### 镜像源配置
+
+下载时默认使用国内镜像源加速，可通过环境变量自定义：
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MAVEN_MIRROR` | `https://maven.aliyun.com/repository/central` | Maven 中央仓库镜像 |
+| `NPM_MIRROR` | `https://registry.npmmirror.com` | npm 镜像 |
+| `PYPI_MIRROR` | `https://mirrors.aliyun.com/pypi/simple` | PyPI 镜像 |
+| `CARGO_MIRROR` | `https://mirrors.ustc.edu.cn/crates.io-index` | Cargo 镜像 |
+
+```bash
+# 使用默认镜像源（国内加速）
+dep-porter download --kind maven --name junit:junit --version 4.13.2
+
+# 自定义镜像源
+MAVEN_MIRROR=https://maven-central.storage.googleapis.com \
+dep-porter download --kind maven --name junit:junit --version 4.13.2
+
+# 使用官方源（海外服务器）
+MAVEN_MIRROR=https://repo1.maven.org/maven2 \
+NPM_MIRROR=https://registry.npmjs.org \
+PYPI_MIRROR=https://pypi.org/simple \
+CARGO_MIRROR=https://index.crates.io \
+dep-porter download --kind maven --name junit:junit --version 4.13.2
+```
+
 ### 3. 拷贝到内网
 
 将以下内容拷贝到内网机器：

@@ -9,7 +9,7 @@ FROM ubuntu:22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Aliyun mirrors
+# Aliyun mirrors for apt
 RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list \
     && sed -i 's|http://security.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list
 
@@ -19,14 +19,26 @@ RUN apt-get update \
         ca-certificates curl python3 python3-pip python3-venv python3-minimal \
     && rm -rf /var/lib/apt/lists/*
 
-# twine + conan via pip
-RUN pip3 install --no-cache-dir twine conan
+# pip mirrors for twine + conan
+RUN pip3 install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com \
+    twine conan
 
-# Rust toolchain (minimal)
+# Rust toolchain (minimal) with USTC mirror
+ENV RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
+ENV RUSTUP_UPDATE_ROOT=https://mirrors.ustc.edu.cn/rust-static/rustup
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     | sh -s -- -y --default-toolchain stable --profile minimal \
     && rm -rf /root/.cargo/registry /root/.cargo/git \
            /root/.rustup/toolchains/*/share
+
+# Configure cargo mirror
+RUN mkdir -p /root/.cargo && cat > /root/.cargo/config.toml <<EOF
+[source.crates-io]
+replace-with = "ustc"
+
+[source.ustc]
+registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index"
+EOF
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────
 FROM ubuntu:22.04
@@ -35,7 +47,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ENV PATH="/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
-# Aliyun mirrors
+# Aliyun mirrors for apt
 RUN sed -i 's|http://archive.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list \
     && sed -i 's|http://security.ubuntu.com|http://mirrors.aliyun.com|g' /etc/apt/sources.list
 
@@ -49,6 +61,23 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info \
               /var/cache/apt /var/log/*
+
+# Configure Maven Aliyun mirror
+RUN mkdir -p /root/.m2 && cat > /root/.m2/settings.xml <<EOF
+<settings>
+  <mirrors>
+    <mirror>
+      <id>aliyun-maven</id>
+      <mirrorOf>central</mirrorOf>
+      <name>Aliyun Maven Mirror</name>
+      <url>https://maven.aliyun.com/repository/central</url>
+    </mirror>
+  </mirrors>
+</settings>
+EOF
+
+# Configure npm mirror
+RUN npm config set registry https://registry.npmmirror.com
 
 # pip-installed tools (twine, conan) from builder
 COPY --from=builder /usr/local/bin/twine        /usr/local/bin/twine

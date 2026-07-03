@@ -12,12 +12,22 @@ NAME="${2:?Missing dependency name}"
 VERSION="${3:?Missing dependency version}"
 OUT_DIR="${4:?Missing output directory}"
 
+# 镜像源配置（可通过环境变量覆盖）
+MAVEN_MIRROR="${MAVEN_MIRROR:-https://maven.aliyun.com/repository/central}"
+NPM_MIRROR="${NPM_MIRROR:-https://registry.npmmirror.com}"
+PYPI_MIRROR="${PYPI_MIRROR:-https://mirrors.aliyun.com/pypi/simple}"
+CARGO_MIRROR="${CARGO_MIRROR:-https://mirrors.ustc.edu.cn/crates.io-index}"
+
 mkdir -p "$OUT_DIR"
 
 echo "=== dep-download ==="
 echo "  kind    : $KIND"
 echo "  name    : $NAME"
 echo "  version : $VERSION"
+echo "  maven_mirror: $MAVEN_MIRROR"
+echo "  npm_mirror  : $NPM_MIRROR"
+echo "  pypi_mirror : $PYPI_MIRROR"
+echo "  cargo_mirror: $CARGO_MIRROR"
 echo "===================="
 
 # ── Maven ─────────────────────────────────────────────────────────────
@@ -61,7 +71,12 @@ download_maven() {
   <groupId>dep.porter</groupId>
   <artifactId>dep-porter-download</artifactId>
   <version>1.0.0</version>
-  <repositories>${snapshot_repos}
+  <repositories>
+    <repository>
+      <id>aliyun-central</id>
+      <url>${MAVEN_MIRROR}</url>
+    </repository>
+    ${snapshot_repos}
   </repositories>
   <dependencies>
     <dependency>
@@ -72,6 +87,21 @@ download_maven() {
   </dependencies>
 </project>
 EOF
+
+    # 配置 Maven settings 使用镜像源
+    mkdir -p "$HOME/.m2"
+    cat > "$HOME/.m2/settings.xml" <<SETTINGS
+<settings>
+  <mirrors>
+    <mirror>
+      <id>aliyun-maven</id>
+      <mirrorOf>central</mirrorOf>
+      <name>Aliyun Maven Mirror</name>
+      <url>${MAVEN_MIRROR}</url>
+    </mirror>
+  </mirrors>
+</settings>
+SETTINGS
 
     echo "Downloading Maven dependency $NAME:$VERSION with transitive deps..."
     cd "$work_dir"
@@ -109,6 +139,9 @@ download_npm() {
   }
 }
 EOF
+
+    # 配置 npm 镜像源
+    npm config set registry "$NPM_MIRROR"
 
     echo "Downloading npm dependency $NAME@$VERSION with transitive deps..."
     cd "$work_dir"
@@ -167,6 +200,8 @@ download_pypi() {
     echo "Downloading PyPI dependency $NAME==$VERSION with transitive deps..."
     pip3 download "$NAME==$VERSION" \
         -d "$OUT_DIR/packages" \
+        -i "$PYPI_MIRROR" \
+        --trusted-host "$(echo "$PYPI_MIRROR" | sed 's|https\?://||' | sed 's|/.*||')" \
         --no-cache-dir 2>&1
 
     echo "PyPI download complete. Packages saved to $OUT_DIR/packages"
@@ -190,6 +225,16 @@ $NAME = "=$VERSION"
 EOF
     mkdir -p "$work_dir/src"
     echo "" > "$work_dir/src/lib.rs"
+
+    # 配置 Cargo 镜像源
+    mkdir -p "$HOME/.cargo"
+    cat > "$HOME/.cargo/config.toml" <<CARGO_CONFIG
+[source.crates-io]
+replace-with = "ustc"
+
+[source.ustc]
+registry = "sparse+${CARGO_MIRROR}"
+CARGO_CONFIG
 
     echo "Downloading Cargo dependency $NAME==$VERSION with transitive deps..."
     cd "$work_dir"
