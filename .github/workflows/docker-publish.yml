@@ -15,6 +15,7 @@ on:
     paths:
       - 'Dockerfile.downloader'
       - 'scripts/download.sh'
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: dep-downloader

@@ -316,8 +316,8 @@ case "$KIND" in
     cargo)  download_cargo ;;
     conan)  download_conan ;;
     *)
-        echo "ERROR: Unsupported dependency kind: $KIND"
-        echo "Supported: maven, npm, pypi, cargo, conan"
+        echo "错误：不支持此类型：$KIND"
+        echo "当前支持: maven, npm, pypi, cargo, conan"
         exit 1
         ;;
 esac
