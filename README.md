@@ -43,7 +43,7 @@
 
 ### 1. 获取程序
 
-从 [GitHub Releases](https://github.com/gudaoxuri/dep-porter/releases) 下载对应平台的预编译版本：
+从 [GitHub Releases](https://github.com/200hub/dep-porter/releases) 下载对应平台的预编译版本：
 
 | 平台 | 文件 |
 |------|------|
@@ -486,7 +486,7 @@ rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT con
 
 当 `Dockerfile.downloader` 或 `scripts/download.sh` 有变更时，自动构建并发布到：
 - Docker Hub: `gudaoxuri/dep-downloader`
-- GitHub Container Registry: `ghcr.io/gudaoxuri/dep-porter/dep-downloader`
+- GitHub Container Registry: `ghcr.io/200hub/dep-porter/dep-downloader`
 
 支持手动触发（workflow_dispatch）。
 
