@@ -30,26 +30,28 @@
 > 而不是把文件堆到任意路径。这样上传后的包才能被 `npm install` / `cargo build` 正常解析和下载。
 > 导入端全部通过 HTTP 实现，**无需安装 npm / cargo**（仅 PyPI 仍依赖 `twine`）。
 
-## 环境要求
+---
+
+## 使用指南
+
+### 环境要求
 
 | 工具       | 用途           | 阶段             |
 | ---------- | -------------- | ---------------- |
-| Rust 1.70+ | 编译 CLI       | 开发             |
 | Docker     | 运行下载器容器 | 外网下载         |
 | twine      | PyPI 导入      | 内网导入（可选） |
 
-## 快速开始
+### 1. 获取程序
 
-### 1. 编译 CLI
+从 [GitHub Releases](https://github.com/gudaoxuri/dep-porter/releases) 下载对应平台的预编译版本：
 
-```bash
-cd dep-porter
-cargo build --release
-```
-
-产物：`target/release/dep-porter`（Windows: `target\release\dep-porter.exe`）
-
-> 也可以从 [GitHub Releases](https://github.com/gudaoxuri/dep-porter/releases) 下载预编译版本。
+| 平台 | 文件 |
+|------|------|
+| Linux x86_64 | `dep-porter-linux-amd64` |
+| Linux ARM64 | `dep-porter-linux-arm64` |
+| Windows x86_64 | `dep-porter-windows-amd64.exe` |
+| macOS x86_64 | `dep-porter-macos-amd64` |
+| macOS ARM64 | `dep-porter-macos-arm64` |
 
 ### 2. 外网下载（联网机器）
 
@@ -84,7 +86,7 @@ dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --check-sec
 
 将以下内容拷贝到内网机器：
 
-1. `dep-porter` 二进制文件（或源码 + `cargo build --release`）
+1. `dep-porter` 二进制文件
 2. 下载目录（如 `maven_org.apache.commons_commons-lang3_3.14.0/`）
 3. `config.toml` 配置文件
 
@@ -130,36 +132,7 @@ dep-porter import --kind maven --name junit:junit --version 4.13.2 --overwrite
 
 > `--config` 默认读取当前目录的 `config.toml`，可省略。如需指定其他路径：`--config /path/to/config.toml`
 
-## 项目结构
-
-```
-dep-porter/
-├── Cargo.toml               # Rust 项目配置
-├── Dockerfile.downloader     # Docker 下载器镜像（多阶段构建）
-├── SKILL.md                  # LLM 使用指南
-├── config.example.toml       # Nexus 配置示例
-├── .github/
-│   └── workflows/
-│       ├── docker-publish.yml  # GitHub Actions: Docker 镜像构建与发布
-│       └── build-release.yml   # GitHub Actions: 跨平台程序构建
-├── scripts/
-│   └── download.sh           # 容器内下载脚本（Maven/npm/PyPI/Cargo/Conan）
-├── src/
-│   ├── main.rs               # 入口
-│   ├── cli.rs                # clap 参数解析
-│   ├── config.rs             # TOML 配置读取
-│   ├── docker.rs             # Docker 调用 + 镜像自动拉取
-│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）
-│   ├── registry.rs           # 原生发布载荷构造（Cargo publish / npm publish）
-│   ├── model.rs              # 数据类型定义
-│   ├── security.rs           # SCA 安全检查（OSV.dev API）
-│   └── util.rs               # 工具函数（目录命名、路径转换）
-└── tests/
-    ├── e2e.rs                # 本地逻辑测试 + 可选 Docker/Nexus E2E
-    └── docker_e2e.rs         # Docker E2E 测试（覆盖全部 5 种依赖类型）
-```
-
-## Nexus 仓库配置
+### Nexus 仓库配置
 
 导入前需要在 Nexus 创建以下仓库：
 
@@ -182,7 +155,7 @@ dep-porter/
 - 默认模式（skip-if-exists）：上传前先 HEAD 检查，已存在则跳过
 - `--overwrite` 模式：直接 PUT 覆盖，如果仓库写策略禁止覆盖（如 `ALLOW_ONCE`）会报错
 
-## 内网消费已导入的依赖
+### 内网消费已导入的依赖
 
 导入完成后，内网开发机需要把包管理器指向 Nexus 才能使用这些依赖。
 
@@ -223,7 +196,7 @@ npm install     # 依赖将从 Nexus 拉取
 
 **PyPI**：`pip install --index-url http://user:password@nexus.internal.example.com/repository/pypi/simple/ <包名>`。
 
-## 目录命名规则
+### 目录命名规则
 
 ```
 {kind}_{safe_name}_{version}
@@ -241,9 +214,135 @@ cargo_serde_1.0.203
 conan_zlib_1.2.13
 ```
 
-## 测试
+### 安全检查（SCA）
 
-### 本地测试（不需要 Docker）
+下载时可选启用漏洞扫描，通过 [OSV.dev](https://osv.dev) API 查询已知 CVE：
+
+```bash
+dep-porter download --kind maven --name log4j:log4j --version 2.14.1 --check-security
+```
+
+如果发现漏洞，会显示详情并提示是否继续：
+
+```
+=== Security Advisory ===
+  maven log4j:log4j@2.14.1
+  Found 2 known vulnerability(ies):
+
+  [1] GHSA-26fg-89j6-3q3j (CVSS: 9.8) — Apache Log4j2 Remote Code Execution
+  [2] CVE-2021-44228 (CVSS: 10.0) — Log4j 2.x JNDI RCE
+=========================
+
+Continue download anyway? [y/N]
+```
+
+- 输入 `y` 继续下载，输入其他或直接回车取消
+- 不加 `--check-security` 则跳过检查直接下载
+- 支持 Maven/npm/PyPI/Cargo，Conan 暂不支持（OSV.dev 无此生态）
+
+### 常见问题
+
+**Q: 没有 Docker 能用吗？**
+下载阶段需要 Docker，导入阶段不需要。
+
+**Q: 内网机器没有 Docker 怎么办？**
+Docker 只在下载阶段使用（联网机器）。导入阶段通过 HTTP 直接上传到 Nexus。
+
+**Q: 传递依赖怎么处理？**
+各包管理器原生解析，下载时获取完整依赖树，导入时**逐个**上传（包含所有传递依赖）：
+- Maven：`mvn dependency:get -Dtransitive=true`，拷贝本地仓库整体上传
+- npm：`npm install` 解析依赖树，对树中每个包 `npm pack` 取真实 tarball
+- PyPI：`pip download`（含传递依赖）
+- Cargo：`cargo fetch` 拉取整个依赖图，从本地 registry 缓存拷贝真实 `.crate` + 保存 crates.io sparse-index 元数据
+- Conan：`conan install`
+
+**Q: Maven SNAPSHOT 版本怎么处理？**
+版本号包含 `-SNAPSHOT` 的自动发到 `maven_snapshots` 仓库（如果配置了），否则也发到 `maven` 仓库。
+
+**Q: Cargo/Conan 在 Nexus 里不支持怎么办？**
+Nexus 3.74+ 原生支持 Cargo（sparse 协议），在 `config.toml` 配置 `cargo` 仓库名即可。若 Nexus 无 Cargo 支持，不配 `cargo`，将降级到 raw 仓库兜底（仅留存，`cargo` 客户端无法直接使用）。Conan 始终走 raw 兜底。
+
+**Q: 能下载同一包的多个版本吗？**
+可以，每个版本执行一次 `download`，各自生成独立目录。
+
+**Q: 导入时已存在的制品怎么处理？**
+默认跳过（skip-if-exists），加 `--overwrite` 则覆盖。覆盖受 Nexus 仓库写策略限制，`ALLOW_ONCE` 策略下覆盖会返回 4xx 错误。
+
+**Q: 安全检查会拖慢下载速度吗？**
+`--check-security` 是单次 HTTP 请求（OSV.dev API），通常 < 1 秒。不加此参数则无任何开销。
+
+**Q: 支持 Windows 吗？**
+支持。CLI 是 Rust 二进制，Windows/Linux 均可运行。Docker 路径挂载会自动处理 Windows 路径。
+
+---
+
+## 开发指南
+
+### 技术栈
+
+- **语言**：Rust 2021 edition
+- **CLI**：clap 4（derive 宏）
+- **配置**：serde + toml
+- **HTTP**：reqwest（blocking）
+- **Docker 调用**：std::process::Command
+- **错误处理**：anyhow + thiserror
+
+### 项目结构
+
+```
+dep-porter/
+├── Cargo.toml               # Rust 项目配置
+├── Dockerfile.downloader     # Docker 下载器镜像（多阶段构建）
+├── SKILL.md                  # LLM 使用指南
+├── config.example.toml       # Nexus 配置示例
+├── .github/
+│   └── workflows/
+│       ├── docker-publish.yml  # GitHub Actions: Docker 镜像构建与发布
+│       └── build-release.yml   # GitHub Actions: 跨平台程序构建
+├── scripts/
+│   └── download.sh           # 容器内下载脚本（Maven/npm/PyPI/Cargo/Conan）
+├── src/
+│   ├── main.rs               # 入口
+│   ├── cli.rs                # clap 参数解析
+│   ├── config.rs             # TOML 配置读取
+│   ├── docker.rs             # Docker 调用 + 镜像自动拉取
+│   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）
+│   ├── registry.rs           # 原生发布载荷构造（Cargo publish / npm publish）
+│   ├── model.rs              # 数据类型定义
+│   ├── security.rs           # SCA 安全检查（OSV.dev API）
+│   └── util.rs               # 工具函数（目录命名、路径转换）
+└── tests/
+    ├── e2e.rs                # 本地逻辑测试 + 可选 Docker/Nexus E2E
+    └── docker_e2e.rs         # Docker E2E 测试（覆盖全部 5 种依赖类型）
+```
+
+### 编译
+
+```bash
+cd dep-porter
+cargo build --release
+```
+
+产物：`target/release/dep-porter`（Windows: `target\release\dep-porter.exe`）
+
+### 关键设计
+
+- **Docker 镜像自动拉取**：运行 `download` 时如果 `gudaoxuri/dep-downloader:latest` 不存在，会自动从 Docker Hub 拉取
+- **Windows 路径兼容**：`to_docker_mount_path()` 自动将 `C:\...` 转换为 `/c/...` 供 Docker 挂载
+- **多阶段构建**：builder 阶段安装 pip 包和 Rust 工具链，runtime 阶段通过 apt 安装 JDK/Maven/Node，利用缓存加速重建
+- **lib + bin 双 crate**：`src/lib.rs` 导出公共模块，`src/main.rs` 作为入口，测试可直接 import 库模块
+
+### 添加新的依赖类型
+
+1. `src/model.rs`：在 `DepKind` 枚举中添加新变体
+2. `scripts/download.sh`：添加对应的 `download_xxx()` 函数和 case 分支
+3. `src/import.rs`：添加对应的导入逻辑（如需原生发布协议，在 `src/registry.rs` 添加可单测的载荷构造函数）
+4. `tests/docker_e2e.rs`：添加工具可用性测试和下载测试
+5. `Dockerfile.downloader`：如需新工具，在 builder/runtime 阶段安装
+
+### 测试
+
+#### 本地测试（不需要 Docker）
 
 ```bash
 cargo test
@@ -251,7 +350,7 @@ cargo test
 
 测试内容：目录命名、Maven 坐标解析、配置解析、错误处理等。
 
-### Docker E2E 测试
+#### Docker E2E 测试
 
 需要 Docker 环境：
 
@@ -264,7 +363,7 @@ cargo test --test docker_e2e -- --test-threads=1
 
 测试内容：镜像拉取、全部工具可用性（mvn/java/node/npm/python/pip/twine/cargo/rustc/conan）、每种依赖类型的下载功能、目录命名验证、错误处理。
 
-### Nexus E2E 测试
+#### Nexus E2E 测试
 
 Nexus E2E 测试会向**真实运行的 Nexus** 发布各类型构件，并验证它们能以正确的原生格式被检索/使用（即真正可用）。测试默认读取项目根目录的 `config.toml`，也可用 `NEXUS_*` 环境变量覆盖。
 
@@ -313,7 +412,7 @@ cargo test --test e2e -- --test-threads=1
 
 > 若要自建测试 Nexus，需创建以下 hosted 仓库：maven2（maven-releases）、npm、pypi、**cargo（format=cargo，Nexus 3.74+）**、raw。
 
-### 端到端完整测试（下载 + 导入）
+#### 端到端完整测试（下载 + 导入）
 
 验证从下载到导入的完整流程：
 
@@ -374,11 +473,11 @@ docker rm -f nexus-test
 rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT config.toml
 ```
 
-## GitHub Actions
+### GitHub Actions
 
 项目配置了 GitHub Actions 自动化构建：
 
-### Docker 镜像发布
+#### Docker 镜像发布
 
 当 `Dockerfile.downloader` 或 `scripts/download.sh` 有变更时，自动构建并发布到：
 - Docker Hub: `gudaoxuri/dep-downloader`
@@ -386,99 +485,32 @@ rm -rf maven_junit_junit_4.13.2 maven_org.example_my-snapshot_1.0.0-SNAPSHOT con
 
 支持手动触发（workflow_dispatch）。
 
-### 跨平台程序构建
+#### 跨平台程序构建与发布
 
-当 `Cargo.toml` 中的 version 变更时，自动构建以下平台的可执行文件：
+当 `Cargo.toml` 中的 version 对应的 release 不存在时，自动构建以下平台的可执行文件：
 - Linux AMD64 / ARM64
 - Windows AMD64
 - macOS AMD64 / ARM64
 
-推送 `v*` 标签时自动创建 GitHub Release。
+自动创建 GitHub Release，包含：
+- 所有平台的二进制文件
+- 自动生成的发布说明（提交记录）
+
+**发布流程：**
+```bash
+# 1. 更新 Cargo.toml 中的 version
+# version = "1.1.0"
+
+# 2. 推送到 main/master
+git add Cargo.toml
+git commit -m "bump version to 1.1.0"
+git push
+
+# 3. GitHub Actions 自动：
+#    - 检查 v1.1.0 release 是否存在
+#    - 如果不存在，构建所有平台二进制文件
+#    - 创建 v1.1.0 标签
+#    - 发布 Release
+```
 
 支持手动触发（workflow_dispatch）。
-
-## 开发指南
-
-### 技术栈
-
-- **语言**：Rust 2021 edition
-- **CLI**：clap 4（derive 宏）
-- **配置**：serde + toml
-- **HTTP**：reqwest（blocking）
-- **Docker 调用**：std::process::Command
-- **错误处理**：anyhow + thiserror
-
-### 关键设计
-
-- **Docker 镜像自动拉取**：运行 `download` 时如果 `gudaoxuri/dep-downloader:latest` 不存在，会自动从 Docker Hub 拉取
-- **Windows 路径兼容**：`to_docker_mount_path()` 自动将 `C:\...` 转换为 `/c/...` 供 Docker 挂载
-- **多阶段构建**：builder 阶段安装 pip 包和 Rust 工具链，runtime 阶段通过 apt 安装 JDK/Maven/Node，利用缓存加速重建
-- **lib + bin 双 crate**：`src/lib.rs` 导出公共模块，`src/main.rs` 作为入口，测试可直接 import 库模块
-
-### 添加新的依赖类型
-
-1. `src/model.rs`：在 `DepKind` 枚举中添加新变体
-2. `scripts/download.sh`：添加对应的 `download_xxx()` 函数和 case 分支
-3. `src/import.rs`：添加对应的导入逻辑（如需原生发布协议，在 `src/registry.rs` 添加可单测的载荷构造函数）
-4. `tests/docker_e2e.rs`：添加工具可用性测试和下载测试
-5. `Dockerfile.downloader`：如需新工具，在 builder/runtime 阶段安装
-
-## 安全检查（SCA）
-
-下载时可选启用漏洞扫描，通过 [OSV.dev](https://osv.dev) API 查询已知 CVE：
-
-```bash
-dep-porter download --kind maven --name log4j:log4j --version 2.14.1 --check-security
-```
-
-如果发现漏洞，会显示详情并提示是否继续：
-
-```
-=== Security Advisory ===
-  maven log4j:log4j@2.14.1
-  Found 2 known vulnerability(ies):
-
-  [1] GHSA-26fg-89j6-3q3j (CVSS: 9.8) — Apache Log4j2 Remote Code Execution
-  [2] CVE-2021-44228 (CVSS: 10.0) — Log4j 2.x JNDI RCE
-=========================
-
-Continue download anyway? [y/N]
-```
-
-- 输入 `y` 继续下载，输入其他或直接回车取消
-- 不加 `--check-security` 则跳过检查直接下载
-- 支持 Maven/npm/PyPI/Cargo，Conan 暂不支持（OSV.dev 无此生态）
-
-## 常见问题
-
-**Q: 没有 Docker 能用吗？**
-下载阶段需要 Docker，导入阶段不需要。
-
-**Q: 内网机器没有 Docker 怎么办？**
-Docker 只在下载阶段使用（联网机器）。导入阶段通过 HTTP 直接上传到 Nexus。
-
-**Q: 传递依赖怎么处理？**
-各包管理器原生解析，下载时获取完整依赖树，导入时**逐个**上传（包含所有传递依赖）：
-- Maven：`mvn dependency:get -Dtransitive=true`，拷贝本地仓库整体上传
-- npm：`npm install` 解析依赖树，对树中每个包 `npm pack` 取真实 tarball
-- PyPI：`pip download`（含传递依赖）
-- Cargo：`cargo fetch` 拉取整个依赖图，从本地 registry 缓存拷贝真实 `.crate` + 保存 crates.io sparse-index 元数据
-- Conan：`conan install`
-
-**Q: Maven SNAPSHOT 版本怎么处理？**
-版本号包含 `-SNAPSHOT` 的自动发到 `maven_snapshots` 仓库（如果配置了），否则也发到 `maven` 仓库。
-
-**Q: Cargo/Conan 在 Nexus 里不支持怎么办？**
-Nexus 3.74+ 原生支持 Cargo（sparse 协议），在 `config.toml` 配置 `cargo` 仓库名即可。若 Nexus 无 Cargo 支持，不配 `cargo`，将降级到 raw 仓库兜底（仅留存，`cargo` 客户端无法直接使用）。Conan 始终走 raw 兜底。
-
-**Q: 能下载同一包的多个版本吗？**
-可以，每个版本执行一次 `download`，各自生成独立目录。
-
-**Q: 导入时已存在的制品怎么处理？**
-默认跳过（skip-if-exists），加 `--overwrite` 则覆盖。覆盖受 Nexus 仓库写策略限制，`ALLOW_ONCE` 策略下覆盖会返回 4xx 错误。
-
-**Q: 安全检查会拖慢下载速度吗？**
-`--check-security` 是单次 HTTP 请求（OSV.dev API），通常 < 1 秒。不加此参数则无任何开销。
-
-**Q: 支持 Windows 吗？**
-支持。CLI 是 Rust 二进制，Windows/Linux 均可运行。Docker 路径挂载会自动处理 Windows 路径。

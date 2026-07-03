@@ -1,10 +1,9 @@
 ---
 name: dep-porter
 description: "Use when the user needs to download dependencies (Maven/npm/PyPI/Cargo/Conan) from the internet and import them into an air-gapped Nexus repository. Triggers: 'download dependencies for Nexus', 'import to Nexus', 'offline dependency transfer', 'air-gapped dependency sync', '搬运依赖到内网'."
-version: 0.1.0
+version: 1.0.0
 requires:
   - Docker (download phase only)
-  - Rust 1.70+ (build CLI)
 ---
 
 # dep-porter
@@ -16,6 +15,18 @@ Transfer dependencies from public registries to an air-gapped Nexus.
 User has an internal Nexus that cannot access the internet and needs to transfer packages (with transitive dependencies) across the network boundary.
 
 **Do not use** when Nexus can reach the internet directly — configure Nexus proxy repositories instead.
+
+## Installation
+
+Download pre-built binaries from [GitHub Releases](https://github.com/gudaoxuri/dep-porter/releases):
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `dep-porter-linux-amd64` |
+| Linux ARM64 | `dep-porter-linux-arm64` |
+| Windows x86_64 | `dep-porter-windows-amd64.exe` |
+| macOS x86_64 | `dep-porter-macos-amd64` |
+| macOS ARM64 | `dep-porter-macos-arm64` |
 
 ## Quick reference
 
@@ -47,7 +58,7 @@ dep-porter import --kind <kind> --name <name> --version <ver> [--overwrite]
 | Cargo | `cargo`                        | `raw`            |
 | Conan | `raw`                          | —                |
 
-All transitive dependencies are uploaded. `_remote.repositories` and `maven-metadata-*.xml` files are automatically filtered out.
+All transitive dependencies are uploaded. `_remote.repositories`, `resolver-status.properties`, and `maven-metadata-*.xml` files are automatically filtered out.
 
 ## Overwrite behavior
 
@@ -87,7 +98,7 @@ raw = "raw-hosted"
       → creates maven_org.apache.commons_commons-lang3_3.14.0/
 
 - [ ] Step 2: Copy to air-gapped machine
-      - dep-porter binary (or source + cargo build --release)
+      - dep-porter binary (from GitHub Releases)
       - Download directory
       - config.toml
 
@@ -97,11 +108,11 @@ raw = "raw-hosted"
 
 ## Gotchas
 
-- Docker image `dep-downloader:latest` is built automatically on first run if missing. Build manually: `docker build -f Dockerfile.downloader -t dep-downloader:latest .`
+- Docker image `gudaoxuri/dep-downloader:latest` is automatically pulled from Docker Hub on first run.
 - Maven `dependency:get` is used (not `dependency:go-offline`) to avoid pulling Maven plugin dependencies.
+- Maven SNAPSHOT versions: files containing `-SNAPSHOT` in their path are uploaded to `maven_snapshots` repo, other files (transitive deps) are uploaded to `maven` repo.
 - SNAPSHOT detection is case-insensitive: `-SNAPSHOT`, `-snapshot`, `-Snapshot` all route to `maven_snapshots`.
 - Cargo imports try `cargo` repo first; on any failure (404, 500, connection error), automatically fall back to `raw`.
-- Cargo downloads generate both `vendor/` (source) and `crates/` (.crate files). The import tries `cargo` repo first via Nexus API; on failure (which is common — Nexus cargo repos don't accept standard REST PUT), automatically falls back to `raw` repo with structured paths (`cargo/{name}/{version}/`).
 - Conan security check is not available — OSV.dev does not index Conan packages.
 - Windows paths are auto-converted (`C:\foo` → `/c/foo`) for Docker mounts.
 - `--config` defaults to `config.toml` in the current directory. The file must exist or the command fails.
