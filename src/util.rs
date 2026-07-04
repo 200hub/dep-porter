@@ -23,19 +23,37 @@ pub fn build_dir_name(kind: DepKind, name: &str, version: &str) -> String {
 
 /// 将Windows主机路径转换为Docker兼容的挂载路径。
 ///
-/// 在Windows上，`C:\Users\foo`变为`/c/Users/foo`。
+/// 在Windows上：
+/// - 绝对路径 `C:\Users\foo` 变为 `/c/Users/foo`
+/// - 相对路径 `.\foo` 或 `foo` 转换为当前工作目录的绝对路径，然后转换
 /// 在Linux/macOS上，路径原样返回。
 pub fn to_docker_mount_path(path: &Path) -> String {
-    let s = path.to_string_lossy().to_string();
     if cfg!(target_os = "windows") {
+        // 尝试将路径解析为绝对路径
+        let abs_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            // 相对路径，基于当前工作目录解析
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+
+        let s = abs_path.to_string_lossy().to_string();
+
         // C:\Users\foo -> /c/Users/foo
         if s.len() >= 2 && s.as_bytes()[1] == b':' {
             let drive = (s.as_bytes()[0] as char).to_lowercase().to_string();
             let rest = &s[2..].replace('\\', "/");
             return format!("/{}{}", drive, rest);
         }
+
+        // 如果无法转换，返回原始路径（Linux风格）
+        return s;
     }
-    s
+
+    // Linux/macOS 上原样返回
+    path.to_string_lossy().to_string()
 }
 
 /// 递归收集目录下的所有文件。

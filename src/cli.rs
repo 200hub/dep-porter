@@ -37,9 +37,13 @@ pub struct DownloadArgs {
     pub output: String,
 
     /// 下载前通过OSV.dev检查已知漏洞。
-    /// 如果发现漏洞，将提示您继续或中止。
-    #[arg(long, default_value_t = false)]
+    /// 默认开启，使用 --no-check-security 可关闭。
+    #[arg(long, default_value_t = true, overrides_with = "no_check_security")]
     pub check_security: bool,
+
+    /// 关闭安全漏洞检查。
+    #[arg(long, hide = true)]
+    pub no_check_security: bool,
 }
 
 /// `import`子命令的参数。
