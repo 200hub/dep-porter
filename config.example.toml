@@ -1,12 +1,39 @@
+# =============================================================================
+# dep-porter 配置文件
+# 将此文件复制为 config.toml 并根据实际情况修改
+# =============================================================================
+
 [nexus]
-base_url = "http://localhost:8081/"
+# Nexus 服务器地址（必填）
+base_url = "http://localhost:8081"
+
+# Nexus 认证信息（必填）
 username = "admin"
-password = "12345678"
+password = "admin123"
 
 [repositories]
+# Maven 仓库名称（必填）
+# 用于存放正式版本（非 SNAPSHOT）
 maven = "maven-releases"
-maven_snapshots = "maven-snapshots"   # 可选，不填则 SNAPSHOT 也发到 maven
-npm = "npm"
-pypi = "pypi"
-cargo = "cargo"                # 可选，不填则走 raw 兜底
-raw = "raw"
+
+# Maven 快照仓库名称（可选）
+# 用于存放 SNAPSHOT 版本
+# 如果不配置，SNAPSHOT 版本也会发到 maven 仓库
+# maven_snapshots = "maven-snapshots"
+
+# npm 仓库名称（必填）
+# 必须是 npm 格式的 hosted 仓库
+npm = "npm-hosted"
+
+# PyPI 仓库名称（必填）
+# 必须是 pypi 格式的 hosted 仓库
+pypi = "pypi-hosted"
+
+# Cargo 仓库名称（可选）
+# 必须是 cargo 格式的 hosted 仓库（需要 Nexus 3.74+）
+# 如果不配置，会降级到 raw 仓库（cargo 客户端无法使用）
+# cargo = "cargo-hosted"
+
+# Raw 仓库名称（必填）
+# 用于 Conan 以及 Cargo 仓库未配置时的兜底
+raw = "raw-hosted"

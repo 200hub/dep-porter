@@ -96,6 +96,8 @@ jobs:
           mkdir -p "dep-porter-${{ matrix.platform }}"
           # Copy binary with standard name
           cp "target/${{ matrix.target }}/release/dep-porter${{ matrix.ext }}" "dep-porter-${{ matrix.platform }}/dep-porter${{ matrix.ext }}"
+          # Copy example config with comments
+          cp "config.example.toml" "dep-porter-${{ matrix.platform }}/config.example.toml"
           # Create tar.gz (Unix) or zip (Windows)
           if [ "${{ runner.os }}" = "Windows" ]; then
             7z a "dep-porter-${{ matrix.platform }}.zip" "dep-porter-${{ matrix.platform }}"
