@@ -31,13 +31,13 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
     && rm -rf /root/.cargo/registry /root/.cargo/git \
            /root/.rustup/toolchains/*/share
 
-# Configure cargo mirror
+# Configure cargo mirror (sparse registry URL 必须以 / 结尾)
 RUN mkdir -p /root/.cargo && cat > /root/.cargo/config.toml <<EOF
 [source.crates-io]
 replace-with = "ustc"
 
 [source.ustc]
-registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index"
+registry = "sparse+https://mirrors.ustc.edu.cn/crates.io-index/"
 EOF
 
 # ── Stage 2: Runtime ─────────────────────────────────────────────────────────

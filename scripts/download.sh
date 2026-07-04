@@ -16,7 +16,8 @@ OUT_DIR="${4:?Missing output directory}"
 MAVEN_MIRROR="${MAVEN_MIRROR:-https://maven.aliyun.com/repository/central}"
 NPM_MIRROR="${NPM_MIRROR:-https://registry.npmmirror.com}"
 PYPI_MIRROR="${PYPI_MIRROR:-https://mirrors.aliyun.com/pypi/simple}"
-CARGO_MIRROR="${CARGO_MIRROR:-https://mirrors.ustc.edu.cn/crates.io-index}"
+# Cargo sparse registry URL 必须以 / 结尾
+CARGO_MIRROR="${CARGO_MIRROR:-https://mirrors.ustc.edu.cn/crates.io-index/}"
 
 mkdir -p "$OUT_DIR"
 
@@ -288,13 +289,20 @@ CARGO_CONFIG
     #   1. copy its authentic .crate from the registry cache
     #   2. save its crates.io sparse-index line (deps + features) so the import
     #      side can reconstruct the exact Cargo publish metadata offline.
-    OUT_DIR="$OUT_DIR" python3 - <<'PY'
+    OUT_DIR="$OUT_DIR" CARGO_MIRROR="$CARGO_MIRROR" python3 - <<'PY'
 import os, json, glob, shutil, subprocess, urllib.request
+import time
 
 out = os.environ["OUT_DIR"]
 crates_dir = os.path.join(out, "crates")
 index_dir = os.path.join(out, "index")
 cargo_home = os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo"))
+
+# 使用环境变量中的镜像源，如果没有则使用默认的 crates.io
+cargo_mirror = os.environ.get("CARGO_MIRROR", "https://index.crates.io/")
+# 确保 URL 以 / 结尾
+if not cargo_mirror.endswith("/"):
+    cargo_mirror += "/"
 
 meta = json.loads(subprocess.check_output(
     ["cargo", "metadata", "--format-version", "1", "--offline"]))
@@ -309,6 +317,8 @@ def sparse_prefix(n):
 total = len([p for p in meta["packages"] if "registry+" in (p.get("source") or "")])
 copied = 0
 indexed = 0
+failed_index = []
+
 for p in meta["packages"]:
     src = p.get("source") or ""
     # Only real crates.io registry deps (skip the local root + git/path deps).
@@ -326,19 +336,33 @@ for p in meta["packages"]:
         print(f"  WARN: .crate not found in cache for {stem}")
 
     # 2. save the crates.io index line for this exact version
-    try:
-        url = "https://index.crates.io/" + sparse_prefix(name)
-        data = urllib.request.urlopen(url, timeout=30).read().decode()
-        line = next(l for l in data.splitlines() if json.loads(l)["vers"] == vers)
-        with open(os.path.join(index_dir, f"{stem}.json"), "w") as f:
-            f.write(line)
-        indexed += 1
-    except Exception as e:
-        print(f"  WARN: failed to fetch index metadata for {stem}: {e}")
+    max_retries = 3
+    success = False
+    for attempt in range(max_retries):
+        try:
+            url = cargo_mirror + sparse_prefix(name)
+            req = urllib.request.Request(url, headers={"User-Agent": "dep-porter/1.0"})
+            data = urllib.request.urlopen(req, timeout=30).read().decode()
+            line = next(l for l in data.splitlines() if json.loads(l)["vers"] == vers)
+            with open(os.path.join(index_dir, f"{stem}.json"), "w") as f:
+                f.write(line)
+            indexed += 1
+            success = True
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(1)  # 重试前等待 1 秒
+            else:
+                print(f"  WARN: failed to fetch index metadata for {stem} after {max_retries} attempts: {e}")
+                failed_index.append(stem)
 
 print(f"  处理完成: {total} 个 crate")
 print(f"  复制: {copied} 个 .crate 文件")
 print(f"  索引: {indexed} 个 index 条目")
+if failed_index:
+    print(f"  失败: {len(failed_index)} 个 index 条目")
+    for f in failed_index:
+        print(f"    - {f}")
 PY
 
     # Keep the lockfile for reference / reproducibility.
