@@ -34,7 +34,7 @@ Each archive contains the `dep-porter` binary (or `dep-porter.exe` on Windows).
 
 ```bash
 # Download (internet-connected machine, requires Docker)
-dep-porter download --kind <kind> --name <name> --version <ver> [--check-security]
+dep-porter download --kind <kind> --name <name> --version <ver> [--no-check-security]
 
 # Import (air-gapped machine, reads config.toml from cwd by default)
 dep-porter import --kind <kind> --name <name> --version <ver> [--overwrite]
@@ -89,7 +89,9 @@ All transitive dependencies are uploaded. `_remote.repositories`, `resolver-stat
 
 ## Security check
 
-`--check-security` queries [OSV.dev](https://osv.dev) for known CVEs before downloading. Supported for Maven/npm/PyPI/Cargo. Not supported for Conan.
+**Enabled by default** — queries [OSV.dev](https://osv.dev) for known CVEs before downloading. Use `--no-check-security` to skip.
+
+Supported for Maven/npm/PyPI/Cargo. Not supported for Conan.
 
 When vulnerabilities are found, displays CVE IDs + CVSS scores and prompts `[y/N]` to continue.
 

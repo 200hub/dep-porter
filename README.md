@@ -21,7 +21,7 @@
 | 类型  | 下载 | 导入 Nexus | 说明                                                                   |
 | ----- | ---- | ---------- | ---------------------------------------------------------------------- |
 | Maven | ✅    | Maven 仓库 | `mvn dependency:get` 递归下载；按 Maven2 布局逐文件上传                |
-| npm   | ✅    | npm 仓库   | 打包依赖树中**全部**包，按 npm publish 协议发布（含传递依赖）          |
+| npm   | ✅    | npm 仓库   | 打包依赖树中全部包，按 npm publish 协议发布（含传递依赖）          |
 | PyPI  | ✅    | PyPI 仓库  | `pip download` + `twine upload`                                        |
 | Cargo | ✅    | Cargo 仓库 | 复制真实 `.crate`，按 Cargo registry publish 协议发布到原生 Cargo 仓库 |
 | Conan | ✅    | raw 仓库   | `conan install` 缓存配方（Nexus 原生不支持，走 raw 兜底）              |
@@ -88,8 +88,8 @@ dep-porter download --kind cargo --name tardis --version 0.1.0-rc.19
 # Conan
 dep-porter download --kind conan --name zlib --version 1.2.13
 
-# 下载前检查安全漏洞（通过 OSV.dev 查询已知 CVE）
-dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --check-security
+# 跳过安全漏洞检查（默认会检查）
+dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --no-check-security
 ```
 
 每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
@@ -255,10 +255,14 @@ conan_zlib_1.2.13
 
 ### 安全检查（SCA）
 
-下载时可选启用漏洞扫描，通过 [OSV.dev](https://osv.dev) API 查询已知 CVE：
+下载时**默认开启**漏洞扫描，通过 [OSV.dev](https://osv.dev) API 查询已知 CVE。如需跳过检查，使用 `--no-check-security`：
 
 ```bash
-dep-porter download --kind maven --name log4j:log4j --version 2.14.1 --check-security
+# 默认会检查安全漏洞
+dep-porter download --kind maven --name log4j:log4j --version 2.14.1
+
+# 跳过安全检查
+dep-porter download --kind maven --name log4j:log4j --version 2.14.1 --no-check-security
 ```
 
 如果发现漏洞，会显示详情并提示是否继续：
@@ -276,7 +280,6 @@ Continue download anyway? [y/N]
 ```
 
 - 输入 `y` 继续下载，输入其他或直接回车取消
-- 不加 `--check-security` 则跳过检查直接下载
 - 支持 Maven/npm/PyPI/Cargo，Conan 暂不支持（OSV.dev 无此生态）
 
 ### 常见问题
@@ -308,7 +311,7 @@ Nexus 3.74+ 原生支持 Cargo（sparse 协议），在 `config.toml` 配置 `ca
 默认跳过（skip-if-exists），加 `--overwrite` 则覆盖。覆盖受 Nexus 仓库写策略限制，`ALLOW_ONCE` 策略下覆盖会返回 4xx 错误。
 
 **Q: 安全检查会拖慢下载速度吗？**
-`--check-security` 是单次 HTTP 请求（OSV.dev API），通常 < 1 秒。不加此参数则无任何开销。
+安全检查是单次 HTTP 请求（OSV.dev API），通常 < 1 秒。使用 `--no-check-security` 可跳过检查。
 
 **Q: 支持 Windows 吗？**
 支持。CLI 是 Rust 二进制，Windows/Linux 均可运行。Docker 路径挂载会自动处理 Windows 路径。
