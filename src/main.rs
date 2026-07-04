@@ -27,8 +27,8 @@ fn cmd_download(args: dep_porter::cli::DownloadArgs) -> Result<()> {
     let output_base = PathBuf::from(&args.output);
     let output_dir = output_base.join(&dir_name);
 
-    // 安全检查（可选）
-    if args.check_security {
+    // 安全检查（默认开启，--no-check-security 可关闭）
+    if args.check_security && !args.no_check_security {
         match dep_porter::security::check_vulnerabilities(args.kind, &args.name, &args.version) {
             Ok(Some(findings)) if !findings.is_empty() => {
                 dep_porter::security::print_findings(args.kind, &args.name, &args.version, &findings);
