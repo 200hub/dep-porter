@@ -268,7 +268,7 @@ dep-porter download --kind maven --name log4j:log4j --version 2.14.1 --no-check-
 如果发现漏洞，会显示详情并提示是否继续：
 
 ```
-=== Security Advisory ===
+=== 安全警告 ===
   maven log4j:log4j@2.14.1
   Found 2 known vulnerability(ies):
 

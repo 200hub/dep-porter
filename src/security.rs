@@ -120,7 +120,7 @@ pub fn check_vulnerabilities(
 
 /// 通过log crate打印漏洞发现。
 pub fn print_findings(kind: DepKind, name: &str, version: &str, findings: &[VulnFinding]) {
-    warn!("=== Security Advisory ===");
+    warn!("=== 安全警告 ===");
     warn!("  {} {}@{}", kind, name, version);
     warn!("  Found {} known vulnerability(ies):", findings.len());
     for (i, f) in findings.iter().enumerate() {
