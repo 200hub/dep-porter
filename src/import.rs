@@ -24,7 +24,7 @@ pub fn import_to_nexus(
     match spec.kind {
         DepKind::Maven => import_maven(spec, download_dir, config, overwrite),
         DepKind::Npm => import_npm(spec, download_dir, config, overwrite),
-        DepKind::Pypi => import_pypi(spec, download_dir, config),
+        DepKind::Pypi => import_pypi(spec, download_dir, config, overwrite),
         DepKind::Cargo => import_cargo(spec, download_dir, config, overwrite),
         DepKind::Conan => import_raw(spec, download_dir, config, "conan", overwrite),
     }
@@ -282,7 +282,7 @@ fn import_npm(
 }
 
 /// 使用`twine upload`导入PyPI包。
-fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig) -> Result<()> {
+fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrite: bool) -> Result<()> {
     // 先检查twine是否已安装
     if which::which("twine").is_err() {
         return Err(anyhow::anyhow!(
@@ -309,36 +309,170 @@ fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig) -> Resul
     // Nexus要求URL末尾带斜杠，否则返回400错误
     let repo_url = format!("{}/repository/{}/", nexus_base, repo_name);
 
-    info!(
-        "正在从{}上传PyPI包到{}",
-        packages_dir.display(),
-        repo_url
-    );
+    // 收集所有包文件（.whl 和 .tar.gz）
+    let package_files: Vec<_> = fs::read_dir(&packages_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            name.ends_with(".whl") || name.ends_with(".tar.gz")
+        })
+        .collect();
 
-    let status = std::process::Command::new("twine")
-        .args([
-            "upload",
-            "--repository-url",
-            &repo_url,
-            "-u",
-            &config.nexus.username,
-            "-p",
-            &config.nexus.password,
-            &format!("{}/*", packages_dir.display()),
-        ])
-        .status()
-        .context("执行twine失败")?;
-
-    if !status.success() {
-        return Err(DepError::DockerCommandFailed(format!(
-            "twine上传退出状态: {}",
-            status
-        ))
-        .into());
+    if package_files.is_empty() {
+        return Err(DepError::DownloadDirEmpty(packages_dir.display().to_string()).into());
     }
 
-    info!("PyPI导入完成 {}=={}", spec.name, spec.version);
+    let client = reqwest::blocking::Client::new();
+    let mut uploaded = 0u32;
+    let mut skipped = 0u32;
+
+    for entry in &package_files {
+        let filename = entry.file_name().to_string_lossy().to_string();
+
+        // 从文件名解析包名和版本
+        let (pkg_name, pkg_version) = parse_pypi_filename(&filename);
+
+        // 如果不覆盖，检查包是否已存在
+        if !overwrite {
+            if pypi_package_exists(&client, &config, nexus_base, repo_name, &pkg_name, &pkg_version) {
+                info!("跳过（已存在）: {}=={}", pkg_name, pkg_version);
+                skipped += 1;
+                continue;
+            }
+        }
+
+        // 上传单个包
+        info!("正在上传: {}", filename);
+        let status = std::process::Command::new("twine")
+            .args([
+                "upload",
+                "--repository-url",
+                &repo_url,
+                "-u",
+                &config.nexus.username,
+                "-p",
+                &config.nexus.password,
+                &entry.path().to_string_lossy(),
+            ])
+            .env("PYTHONIOENCODING", "utf-8")
+            .status()
+            .context("执行twine失败")?;
+
+        if !status.success() {
+            return Err(DepError::DockerCommandFailed(format!(
+                "上传{}失败: {}",
+                filename, status
+            ))
+            .into());
+        }
+        uploaded += 1;
+    }
+
+    info!(
+        "PyPI导入完成 {}: 上传了{}个，跳过了{}个（共{}个包）",
+        spec.name, uploaded, skipped, package_files.len()
+    );
     Ok(())
+}
+
+/// 从 PyPI 文件名解析包名和版本
+/// wheel 格式: {name}-{version}(-{build})?-{python}-{abi}-{platform}.whl
+/// sdist 格式: {name}-{version}.tar.gz
+fn parse_pypi_filename(filename: &str) -> (String, String) {
+    if filename.ends_with(".whl") {
+        // wheel 格式: {name}-{version}-{python}-{abi}-{platform}.whl
+        // 例如: certifi-2026.6.17-py3-none-any.whl
+        //       charset_normalizer-3.4.7-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
+        let without_ext = filename.trim_end_matches(".whl");
+        let parts: Vec<&str> = without_ext.split('-').collect();
+        
+        // python 标签列表
+        let python_tags = ["py2", "py3", "cp2", "cp3", "pp2", "pp3", "jy", "IronPython"];
+        
+        // 找到 python 标签的位置
+        let mut python_tag_idx = None;
+        for (i, part) in parts.iter().enumerate() {
+            // python 标签通常以 py、cp、pp 等开头，后面是数字
+            let lower = part.to_lowercase();
+            for tag in &python_tags {
+                if lower.starts_with(tag) {
+                    python_tag_idx = Some(i);
+                    break;
+                }
+            }
+            if python_tag_idx.is_some() {
+                break;
+            }
+        }
+        
+        if let Some(idx) = python_tag_idx {
+            // python 标签之前的部分是包名和版本
+            // 包名可能包含 '-'，所以需要从 python 标签往前推
+            // 版本号是 python 标签前的第一个部分
+            if idx >= 2 {
+                // 至少有 name 和 version
+                let version = parts[idx - 1];
+                let name = parts[..idx - 1].join("-");
+                return (name, version.to_string());
+            }
+        }
+        
+        // 如果找不到 python 标签，尝试通用方法
+        // 假设最后三个部分是 python-abi-platform
+        if parts.len() >= 4 {
+            let version = parts[parts.len() - 4];
+            let name = parts[..parts.len() - 4].join("-");
+            return (name, version.to_string());
+        }
+    }
+
+    // sdist 格式: {name}-{version}.tar.gz
+    // 例如: requests-2.32.3.tar.gz
+    let without_ext = filename.trim_end_matches(".tar.gz");
+    if let Some(pos) = without_ext.rfind('-') {
+        let version = &without_ext[pos + 1..];
+        let pkg_name = &without_ext[..pos];
+        return (pkg_name.to_string(), version.to_string());
+    }
+
+    // 无法解析，返回原始文件名
+    (filename.to_string(), String::new())
+}
+
+/// 检查 PyPI 包是否已存在于 Nexus
+/// 使用 PyPI simple API 检查: GET /repository/{repo}/simple/{package_name}/
+fn pypi_package_exists(
+    client: &reqwest::blocking::Client,
+    config: &AppConfig,
+    nexus_base: &str,
+    repo_name: &str,
+    pkg_name: &str,
+    pkg_version: &str,
+) -> bool {
+    // 使用 PyPI simple API 检查包是否存在
+    // 返回 HTML 格式，包含所有版本的链接
+    let url = format!(
+        "{}/repository/{}/simple/{}/",
+        nexus_base, repo_name, pkg_name.to_lowercase()
+    );
+
+    if let Ok(resp) = client
+        .get(&url)
+        .basic_auth(&config.nexus.username, Some(&config.nexus.password))
+        .send()
+    {
+        if resp.status().is_success() {
+            if let Ok(body) = resp.text() {
+                // simple API 返回的 HTML 中包含版本链接
+                // 格式通常是: /repository/pypi/simple/{pkg_name}/{pkg_name}-{version}.tar.gz
+                // 或: /repository/pypi/simple/{pkg_name}/{pkg_name}-{version}-py3-none-any.whl
+                // 检查是否包含版本字符串
+                return body.contains(pkg_version);
+            }
+        }
+    }
+
+    false
 }
 
 /// 将Cargo crate导入到原生Nexus Cargo托管仓库。
