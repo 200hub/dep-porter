@@ -20,15 +20,23 @@ CARGO_MIRROR="${CARGO_MIRROR:-https://mirrors.ustc.edu.cn/crates.io-index}"
 
 mkdir -p "$OUT_DIR"
 
-echo "=== dep-download ==="
-echo "  kind    : $KIND"
-echo "  name    : $NAME"
-echo "  version : $VERSION"
-echo "  maven_mirror: $MAVEN_MIRROR"
-echo "  npm_mirror  : $NPM_MIRROR"
-echo "  pypi_mirror : $PYPI_MIRROR"
-echo "  cargo_mirror: $CARGO_MIRROR"
-echo "===================="
+echo ""
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║                   dep-porter 下载器                       ║"
+echo "╚════════════════════════════════════════════════════════════╝"
+echo ""
+echo "  类型    : $KIND"
+echo "  名称    : $NAME"
+echo "  版本    : $VERSION"
+echo "  输出目录: $OUT_DIR"
+echo ""
+echo "  镜像源配置:"
+echo "    Maven : $MAVEN_MIRROR"
+echo "    npm   : $NPM_MIRROR"
+echo "    PyPI  : $PYPI_MIRROR"
+echo "    Cargo : $CARGO_MIRROR"
+echo ""
+echo "────────────────────────────────────────────────────────────"
 
 # ── Maven ─────────────────────────────────────────────────────────────
 download_maven() {
@@ -103,7 +111,9 @@ EOF
 </settings>
 SETTINGS
 
-    echo "Downloading Maven dependency $NAME:$VERSION with transitive deps..."
+    echo ""
+    echo "▶ 步骤 1/2: 解析 Maven 依赖..."
+    echo "  正在下载 $NAME:$VERSION 及其传递依赖..."
     cd "$work_dir"
 
     # dependency:get only downloads the artifact + POM + transitive deps.
@@ -113,10 +123,15 @@ SETTINGS
         -Dartifact="$group_id:$artifact_id:$VERSION" \
         -Dtransitive=true 2>&1 || true
 
+    echo ""
+    echo "▶ 步骤 2/2: 收集下载文件..."
     # Copy the local repository contents to output (without the repository/ prefix)
     if [[ -d "$HOME/.m2/repository" ]]; then
         cp -r "$HOME/.m2/repository" "$OUT_DIR/"
-        echo "Maven download complete. Artifacts saved to $OUT_DIR"
+        local count
+        count=$(find "$OUT_DIR" -type f | wc -l)
+        echo "✓ Maven 下载完成"
+        echo "  共 $count 个文件已保存到 $OUT_DIR"
     else
         echo "ERROR: Maven local repository not found after download."
         exit 1
@@ -143,10 +158,14 @@ EOF
     # 配置 npm 镜像源
     npm config set registry "$NPM_MIRROR"
 
-    echo "Downloading npm dependency $NAME@$VERSION with transitive deps..."
+    echo ""
+    echo "▶ 步骤 1/3: 安装 npm 依赖..."
+    echo "  正在下载 $NAME@$VERSION 及其传递依赖..."
     cd "$work_dir"
     npm install --ignore-scripts --no-audit --no-fund 2>&1
 
+    echo ""
+    echo "▶ 步骤 2/3: 解析依赖树..."
     # Pack the authentic published tarball for EVERY package in the resolved
     # tree (the requested package + all transitive dependencies). We read the
     # installed node_modules to enumerate exact name@version pairs, then
@@ -177,19 +196,27 @@ EOF
       }
       walk(process.cwd());
       fs.writeFileSync("pkglist.txt", [...seen].join("\n") + "\n");
-      console.error("npm: resolved " + seen.size + " package(s) in the dependency tree");
+      console.error("  解析完成: 发现 " + seen.size + " 个包");
     '
 
+    echo ""
+    echo "▶ 步骤 3/3: 打包 tarball..."
+    local total
+    total=$(wc -l < pkglist.txt)
+    local current=0
     while IFS= read -r pkg || [[ -n "$pkg" ]]; do
         [[ -z "$pkg" ]] && continue
-        echo "  packing $pkg"
+        current=$((current + 1))
+        echo "  [$current/$total] 打包 $pkg"
         npm pack "$pkg" --pack-destination "$OUT_DIR/tarballs" 2>/dev/null \
             || echo "  WARN: failed to pack $pkg"
     done < pkglist.txt
 
     local count
     count=$(find "$OUT_DIR/tarballs" -name '*.tgz' | wc -l)
-    echo "npm download complete. $count tarball(s) saved to $OUT_DIR/tarballs"
+    echo ""
+    echo "✓ npm 下载完成"
+    echo "  共 $count 个 tarball 已保存到 $OUT_DIR/tarballs"
     rm -rf "$work_dir"
 }
 
@@ -197,14 +224,20 @@ EOF
 download_pypi() {
     mkdir -p "$OUT_DIR/packages"
 
-    echo "Downloading PyPI dependency $NAME==$VERSION with transitive deps..."
+    echo ""
+    echo "▶ 正在下载 PyPI 依赖..."
+    echo "  $NAME==$VERSION 及其传递依赖..."
     pip3 download "$NAME==$VERSION" \
         -d "$OUT_DIR/packages" \
         -i "$PYPI_MIRROR" \
         --trusted-host "$(echo "$PYPI_MIRROR" | sed 's|https\?://||' | sed 's|/.*||')" \
         --no-cache-dir 2>&1
 
-    echo "PyPI download complete. Packages saved to $OUT_DIR/packages"
+    local count
+    count=$(find "$OUT_DIR/packages" -type f | wc -l)
+    echo ""
+    echo "✓ PyPI 下载完成"
+    echo "  共 $count 个包已保存到 $OUT_DIR/packages"
 }
 
 # ── Cargo ─────────────────────────────────────────────────────────────
@@ -236,7 +269,9 @@ replace-with = "ustc"
 registry = "sparse+${CARGO_MIRROR}"
 CARGO_CONFIG
 
-    echo "Downloading Cargo dependency $NAME==$VERSION with transitive deps..."
+    echo ""
+    echo "▶ 步骤 1/2: 下载 Cargo 依赖..."
+    echo "  正在解析并下载 $NAME==$VERSION 及其传递依赖..."
     cd "$work_dir"
 
     # Resolve + fetch all dependencies into the local registry cache. The
@@ -245,6 +280,8 @@ CARGO_CONFIG
     # bytes and produces crates the client cannot verify.
     cargo fetch 2>&1
 
+    echo ""
+    echo "▶ 步骤 2/2: 收集 crate 文件和索引..."
     mkdir -p "$OUT_DIR/crates" "$OUT_DIR/index"
 
     # For every crates.io dependency in the resolved graph:
@@ -269,6 +306,7 @@ def sparse_prefix(n):
     if len(n) == 3: return "3/" + n[0] + "/" + n
     return n[:2] + "/" + n[2:4] + "/" + n
 
+total = len([p for p in meta["packages"] if "registry+" in (p.get("source") or "")])
 copied = 0
 indexed = 0
 for p in meta["packages"]:
@@ -298,13 +336,18 @@ for p in meta["packages"]:
     except Exception as e:
         print(f"  WARN: failed to fetch index metadata for {stem}: {e}")
 
-print(f"cargo: copied {copied} crate(s), captured {indexed} index entr(ies)")
+print(f"  处理完成: {total} 个 crate")
+print(f"  复制: {copied} 个 .crate 文件")
+print(f"  索引: {indexed} 个 index 条目")
 PY
 
     # Keep the lockfile for reference / reproducibility.
     [[ -f Cargo.lock ]] && cp Cargo.lock "$OUT_DIR/"
 
-    echo "Cargo download complete. .crate files in $OUT_DIR/crates, index metadata in $OUT_DIR/index"
+    echo ""
+    echo "✓ Cargo 下载完成"
+    echo "  .crate 文件保存到 $OUT_DIR/crates"
+    echo "  索引元数据保存到 $OUT_DIR/index"
     rm -rf "$work_dir"
 }
 
@@ -317,7 +360,9 @@ download_conan() {
 $NAME/$VERSION
 EOF
 
-    echo "Downloading Conan dependency $NAME/$VERSION with transitive deps..."
+    echo ""
+    echo "▶ 步骤 1/2: 下载 Conan 依赖..."
+    echo "  正在下载 $NAME/$VERSION 及其传递依赖..."
     cd "$work_dir"
 
     # Detect or create a default Conan profile
@@ -341,6 +386,8 @@ PROFILE
     # Install dependencies — try download-only first, fall back to build
     conan install . --build=never 2>&1 || true
 
+    echo ""
+    echo "▶ 步骤 2/2: 收集 Conan 缓存..."
     # Copy Conan cache / output to the output directory
     if [[ -d "$HOME/.conan2" ]]; then
         cp -r "$HOME/.conan2" "$OUT_DIR/conan-cache" 2>/dev/null || true
@@ -349,7 +396,9 @@ PROFILE
     # Also copy any generated files from the install
     cp -r . "$OUT_DIR/conan-workspace" 2>/dev/null || true
 
-    echo "Conan download complete. Files saved to $OUT_DIR"
+    echo ""
+    echo "✓ Conan 下载完成"
+    echo "  文件已保存到 $OUT_DIR"
     rm -rf "$work_dir"
 }
 
