@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use indicatif::{ProgressBar, ProgressStyle};
 use log::{info, warn};
 
 use crate::config::AppConfig;
@@ -66,10 +67,21 @@ fn import_maven(
         })
         .collect();
 
+    let total_files = files.len();
     info!(
         "正在上传{}个文件（包括传递依赖项）",
-        files.len()
+        total_files
     );
+
+    // 创建进度条
+    let pb = ProgressBar::new(total_files as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("█▓░"),
+    );
+    pb.set_message("上传中...");
 
     let client = reqwest::blocking::Client::new();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
@@ -105,13 +117,12 @@ fn import_maven(
                 .send();
             if let Ok(resp) = head {
                 if resp.status().is_success() {
-                    info!("跳过（已存在）: {}", url);
+                    pb.inc(1);
                     continue;
                 }
             }
         }
 
-        info!("正在上传: {}", url);
         let content =
             fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
@@ -124,21 +135,24 @@ fn import_maven(
 
         let status = resp.status();
         if !status.is_success() {
+            pb.finish_with_message("上传失败");
             return Err(DepError::NexusUploadFailed {
                 url: url.clone(),
                 status: status.as_u16(),
             }
             .into());
         }
-        info!("  -> {}", status);
+        pb.inc(1);
     }
+
+    pb.finish_with_message("完成");
 
     info!(
         "Maven导入完成: 为{}:{}:{}上传了{}个文件",
         coord.group_id,
         coord.artifact_id,
         spec.version,
-        files.len()
+        total_files
     );
     Ok(())
 }
@@ -177,11 +191,22 @@ fn import_npm(
         .into());
     }
 
+    let total_files = tgz_files.len();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
     let repo_name = &config.repositories.npm;
     let client = reqwest::blocking::Client::new();
     let mut published = 0u32;
     let mut skipped = 0u32;
+
+    // 创建进度条
+    let pb = ProgressBar::new(total_files as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("█▓░"),
+    );
+    pb.set_message("发布npm包...");
 
     for file in &tgz_files {
         let tgz = fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
@@ -207,8 +232,8 @@ fn import_npm(
                 .send()
             {
                 if resp.status().is_success() {
-                    info!("跳过（已存在）: {}@{}", name, version);
                     skipped += 1;
+                    pb.inc(1);
                     continue;
                 }
             }
@@ -220,7 +245,6 @@ fn import_npm(
             repo_name,
             registry::npm_encode_name(&name)
         );
-        info!("正在发布npm包: {}@{}", name, version);
 
         let resp = client
             .put(&url)
@@ -232,6 +256,7 @@ fn import_npm(
 
         let status = resp.status();
         if !status.is_success() {
+            pb.finish_with_message("发布失败");
             let body = resp.text().unwrap_or_default();
             return Err(DepError::NexusUploadFailed {
                 url: format!("{} ({}@{}): {}", url, name, version, body.trim()),
@@ -239,9 +264,11 @@ fn import_npm(
             }
             .into());
         }
-        info!("  -> {} {}@{}", status, name, version);
         published += 1;
+        pb.inc(1);
     }
+
+    pb.finish_with_message("完成");
 
     info!(
         "npm导入完成 {}@{}: 发布了{}个，跳过了{}个（共{}个tarball）",
@@ -249,7 +276,7 @@ fn import_npm(
         spec.version,
         published,
         skipped,
-        tgz_files.len()
+        total_files
     );
     Ok(())
 }
@@ -378,11 +405,22 @@ fn publish_crates(
         return Err(DepError::DownloadDirEmpty(crates_dir.display().to_string()).into());
     }
 
+    let total_files = crate_files.len();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
     let publish_url = format!("{}/repository/{}/api/v1/crates/new", nexus_base, repo_name);
     let client = reqwest::blocking::Client::new();
     let mut published = 0u32;
     let mut skipped = 0u32;
+
+    // 创建进度条
+    let pb = ProgressBar::new(total_files as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("█▓░"),
+    );
+    pb.set_message("发布Cargo crate...");
 
     for file in &crate_files {
         let filename = file
@@ -414,8 +452,8 @@ fn publish_crates(
         if !overwrite
             && crate_version_exists(&client, config, nexus_base, repo_name, &name, &version)
         {
-            info!("跳过（已存在）: {} {}", name, version);
             skipped += 1;
+            pb.inc(1);
             continue;
         }
 
@@ -423,7 +461,6 @@ fn publish_crates(
             fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
         let body = registry::build_cargo_publish_body(&meta, &crate_bytes)?;
 
-        info!("正在发布crate: {} {}", name, version);
         let resp = client
             .put(&publish_url)
             .basic_auth(&config.nexus.username, Some(&config.nexus.password))
@@ -436,22 +473,25 @@ fn publish_crates(
         let text = resp.text().unwrap_or_default();
         // Cargo API在逻辑失败时返回200状态码和一个`errors`数组。
         if !status.is_success() || text.contains("\"errors\"") {
+            pb.finish_with_message("发布失败");
             return Err(DepError::NexusUploadFailed {
                 url: format!("{} ({} {}): {}", publish_url, name, version, text.trim()),
                 status: status.as_u16(),
             }
             .into());
         }
-        info!("  -> {} {} {}", status, name, version);
         published += 1;
+        pb.inc(1);
     }
+
+    pb.finish_with_message("完成");
 
     info!(
         "通过'{}'完成Cargo导入: 发布了{}个，跳过了{}个（共{}个crate）",
         repo_name,
         published,
         skipped,
-        crate_files.len()
+        total_files
     );
     Ok(())
 }
@@ -496,8 +536,19 @@ fn upload_files_to_repo(
         return Err(DepError::DownloadDirEmpty(download_dir.display().to_string()).into());
     }
 
+    let total_files = files.len();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
     let client = reqwest::blocking::Client::new();
+
+    // 创建进度条
+    let pb = ProgressBar::new(total_files as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta}) {msg}")
+            .unwrap()
+            .progress_chars("█▓░"),
+    );
+    pb.set_message(format!("上传{}...", kind_prefix));
 
     for file in &files {
         let rel = relative_path(download_dir, file)
@@ -517,13 +568,12 @@ fn upload_files_to_repo(
                 .send();
             if let Ok(resp) = head {
                 if resp.status().is_success() {
-                    info!("跳过（已存在）: {}", url);
+                    pb.inc(1);
                     continue;
                 }
             }
         }
 
-        info!("正在上传: {}", url);
         let content =
             fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
@@ -537,14 +587,17 @@ fn upload_files_to_repo(
 
         let status = resp.status();
         if !status.is_success() {
+            pb.finish_with_message("上传失败");
             return Err(DepError::NexusUploadFailed {
                 url: url.clone(),
                 status: status.as_u16(),
             }
             .into());
         }
-        info!("  -> {}", status);
+        pb.inc(1);
     }
+
+    pb.finish_with_message("完成");
 
     Ok(())
 }
