@@ -52,11 +52,17 @@ download_maven() {
 
     local work_dir
     work_dir=$(mktemp -d)
+    local shared_repo="/workspace/dep-cache"
+    local session_repo="$work_dir/repository"
+    mkdir -p "$shared_repo" "$session_repo"
 
     # 判断是否为SNAPSHOT版本，如果是则添加额外的仓库
     local snapshot_repos=""
-    if [[ "$VERSION" == *"-SNAPSHOT" ]]; then
+    local -a update_args=()
+    if [[ "${VERSION^^}" == *"-SNAPSHOT" ]]; then
         echo "Detected SNAPSHOT version, adding snapshot repositories..."
+        # Keep the local cache, but always check for a newer timestamped build.
+        update_args=(-U)
         snapshot_repos="
     <repository>
       <id>apache-snapshots</id>
@@ -82,11 +88,25 @@ download_maven() {
   <version>1.0.0</version>
   <repositories>
     <repository>
+      <id>dep-porter-cache</id>
+      <url>file://${shared_repo}</url>
+      <releases><enabled>true</enabled></releases>
+      <snapshots><enabled>true</enabled></snapshots>
+    </repository>
+    <repository>
       <id>aliyun-central</id>
       <url>${MAVEN_MIRROR}</url>
     </repository>
     ${snapshot_repos}
   </repositories>
+  <pluginRepositories>
+    <pluginRepository>
+      <id>dep-porter-plugin-cache</id>
+      <url>file://${shared_repo}</url>
+      <releases><enabled>true</enabled></releases>
+      <snapshots><enabled>true</enabled></snapshots>
+    </pluginRepository>
+  </pluginRepositories>
   <dependencies>
     <dependency>
       <groupId>$group_id</groupId>
@@ -120,21 +140,26 @@ SETTINGS
     # dependency:get only downloads the artifact + POM + transitive deps.
     # dependency:go-offline pulls Maven plugins and their deps too (bloated).
     # -B: batch mode, no -q: show download progress
-    mvn dependency:get -B \
+    mvn dependency:get -B "${update_args[@]}" \
+        -Dmaven.repo.local="$session_repo" \
         -Dartifact="$group_id:$artifact_id:$VERSION" \
-        -Dtransitive=true 2>&1 || true
+        -Dtransitive=true 2>&1
 
     echo ""
     echo "▶ 步骤 2/2: 收集下载文件..."
-    # Copy the local repository contents to output (without the repository/ prefix)
-    if [[ -d "$HOME/.m2/repository" ]]; then
-        cp -r "$HOME/.m2/repository" "$OUT_DIR/"
+    # The shared repository is an upstream cache only. Export the fresh session
+    # repository so unrelated historical artifacts never leak into this bundle,
+    # then merge the current resolution back into the shared cache.
+    if [[ -d "$session_repo" ]]; then
+        mkdir -p "$OUT_DIR/repository"
+        cp -a "$session_repo/." "$OUT_DIR/repository/"
+        cp -a "$session_repo/." "$shared_repo/"
         local count
-        count=$(find "$OUT_DIR" -type f | wc -l)
+        count=$(find "$OUT_DIR/repository" -type f | wc -l)
         echo "✓ Maven 下载完成"
         echo "  共 $count 个文件已保存到 $OUT_DIR"
     else
-        echo "ERROR: Maven local repository not found after download."
+        echo "ERROR: Maven session repository not found after download."
         exit 1
     fi
 
@@ -231,8 +256,7 @@ download_pypi() {
     pip3 download "$NAME==$VERSION" \
         -d "$OUT_DIR/packages" \
         -i "$PYPI_MIRROR" \
-        --trusted-host "$(echo "$PYPI_MIRROR" | sed 's|https\?://||' | sed 's|/.*||')" \
-        --no-cache-dir 2>&1
+        --trusted-host "$(echo "$PYPI_MIRROR" | sed 's|https\?://||' | sed 's|/.*||')" 2>&1
 
     local count
     count=$(find "$OUT_DIR/packages" -type f | wc -l)
@@ -407,18 +431,29 @@ os=Linux
 PROFILE
     fi
 
-    # Install dependencies — try download-only first, fall back to build
-    conan install . --build=never 2>&1 || true
+    # Prefer a complete prebuilt package. Some Conan Center recipes do not have
+    # a binary matching this minimal downloader image; retain the downloaded
+    # recipe in that case, but never treat a missing/invalid coordinate as a
+    # successful download merely because the cache already contains other data.
+    if ! conan install . --build=never 2>&1; then
+        if ! conan cache path "$NAME/$VERSION" >/dev/null 2>&1; then
+            echo "ERROR: Conan recipe $NAME/$VERSION was not downloaded."
+            exit 1
+        fi
+        echo "WARN: No matching Conan binary was available; exporting the downloaded recipe."
+    fi
 
     echo ""
     echo "▶ 步骤 2/2: 收集 Conan 缓存..."
     # Copy Conan cache / output to the output directory
     if [[ -d "$HOME/.conan2" ]]; then
-        cp -r "$HOME/.conan2" "$OUT_DIR/conan-cache" 2>/dev/null || true
+        mkdir -p "$OUT_DIR/conan-cache"
+        cp -a "$HOME/.conan2/." "$OUT_DIR/conan-cache/"
     fi
 
     # Also copy any generated files from the install
-    cp -r . "$OUT_DIR/conan-workspace" 2>/dev/null || true
+    mkdir -p "$OUT_DIR/conan-workspace"
+    cp -a ./. "$OUT_DIR/conan-workspace/"
 
     echo ""
     echo "✓ Conan 下载完成"
