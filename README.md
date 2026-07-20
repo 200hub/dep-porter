@@ -90,6 +90,9 @@ dep-porter download --kind conan --name zlib --version 1.2.13
 
 # 跳过安全漏洞检查（默认会检查）
 dep-porter download --kind maven --name log4j:log4j --version 1.2.17 --no-check-security
+
+# 跳过许可证商用风险检查（默认会检查）
+dep-porter download --kind npm --name lodash --version 4.17.21 --no-check-license
 ```
 
 每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
@@ -282,6 +285,24 @@ Continue download anyway? [y/N]
 - 输入 `y` 继续下载，输入其他或直接回车取消
 - 支持 Maven/npm/PyPI/Cargo，Conan 暂不支持（OSV.dev 无此生态）
 
+### 许可证商用风险检查
+
+下载时**默认开启**许可证检查，通过 [deps.dev API](https://docs.deps.dev/api/v3/) 查询包版本的许可证：
+
+```bash
+# 默认会检查许可证
+dep-porter download --kind npm --name lodash --version 4.17.21
+
+# 跳过许可证检查
+dep-porter download --kind npm --name lodash --version 4.17.21 --no-check-license
+```
+
+- 常见宽松许可证（如 MIT、Apache-2.0、BSD）会记录检测结果并继续下载
+- Copyleft 许可证会提醒可能存在的分发、修改或网络服务开源义务，并询问是否继续
+- 疑似非商用、非标准、未知或缺失许可证会提醒人工审查，并询问是否继续
+- 支持 Maven/npm/PyPI/Cargo；deps.dev 暂不覆盖 Conan
+- 检测结论仅用于风险提示，不构成法律意见；正式商用前仍应核验许可证原文和实际使用方式
+
 ### 常见问题
 
 **Q: 没有 Docker 能用吗？**
@@ -312,6 +333,9 @@ Nexus 3.74+ 原生支持 Cargo（sparse 协议），在 `config.toml` 配置 `ca
 
 **Q: 安全检查会拖慢下载速度吗？**
 安全检查是单次 HTTP 请求（OSV.dev API），通常 < 1 秒。使用 `--no-check-security` 可跳过检查。
+
+**Q: 许可证检查会阻止下载吗？**
+常见宽松许可证不会阻止下载。遇到 Copyleft、疑似非商用、非标准或许可证信息缺失时会询问是否继续；API 查询失败时只告警，不阻断下载。使用 `--no-check-license` 可跳过检查。
 
 **Q: 支持 Windows 吗？**
 支持。CLI 是 Rust 二进制，Windows/Linux 均可运行。Docker 路径挂载会自动处理 Windows 路径。
@@ -351,6 +375,7 @@ dep-porter/
 │   ├── import.rs             # Nexus 上传逻辑（含 overwrite/skip）
 │   ├── registry.rs           # 原生发布载荷构造（Cargo publish / npm publish）
 │   ├── model.rs              # 数据类型定义
+│   ├── license.rs            # 许可证商用风险检查（deps.dev API）
 │   ├── security.rs           # SCA 安全检查（OSV.dev API）
 │   └── util.rs               # 工具函数（目录命名、路径转换）
 └── tests/

@@ -34,7 +34,7 @@ Each archive contains the `dep-porter` binary (or `dep-porter.exe` on Windows).
 
 ```bash
 # Download (internet-connected machine, requires Docker)
-dep-porter download --kind <kind> --name <name> --version <ver> [--no-check-security]
+dep-porter download --kind <kind> --name <name> --version <ver> [--no-check-security] [--no-check-license]
 
 # Import (air-gapped machine, reads config.toml from cwd by default)
 dep-porter import --kind <kind> --name <name> --version <ver> [--overwrite]
@@ -94,6 +94,14 @@ All transitive dependencies are uploaded. `_remote.repositories`, `resolver-stat
 Supported for Maven/npm/PyPI/Cargo. Not supported for Conan.
 
 When vulnerabilities are found, displays CVE IDs + CVSS scores and prompts `[y/N]` to continue.
+
+## Commercial license check
+
+**Enabled by default** — queries [deps.dev](https://docs.deps.dev/api/v3/) for package-version license metadata. Use `--no-check-license` to skip.
+
+Supported for Maven/npm/PyPI/Cargo. Not supported for Conan.
+
+Common permissive licenses continue automatically. Copyleft, potentially non-commercial, non-standard, unknown, or missing licenses display a compliance reminder and prompt `[y/N]` to continue. This is a risk reminder, not legal advice.
 
 ## Config file
 

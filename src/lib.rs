@@ -2,6 +2,7 @@ pub mod cli;
 pub mod config;
 pub mod docker;
 pub mod import;
+pub mod license;
 pub mod model;
 pub mod registry;
 pub mod security;

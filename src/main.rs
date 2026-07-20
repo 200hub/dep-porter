@@ -49,6 +49,30 @@ fn cmd_download(args: dep_porter::cli::DownloadArgs) -> Result<()> {
         }
     }
 
+    // 许可证商用风险检查（默认开启，--no-check-license 可关闭）
+    if args.check_license && !args.no_check_license {
+        match dep_porter::license::check_license(args.kind, &args.name, &args.version) {
+            Ok(Some(finding)) => {
+                let needs_confirmation = dep_porter::license::print_finding(
+                    args.kind,
+                    &args.name,
+                    &args.version,
+                    &finding,
+                );
+                if needs_confirmation && !dep_porter::security::prompt_continue() {
+                    info!("用户因许可证风险中止下载。");
+                    return Ok(());
+                }
+            }
+            Ok(None) => {
+                info!("许可证检查不适用于{}。", args.kind);
+            }
+            Err(e) => {
+                warn!("许可证检查失败（{}），继续执行。", e);
+            }
+        }
+    }
+
     info!(
         "正在下载 {} {}:{} ...",
         args.kind, args.name, args.version

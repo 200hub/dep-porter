@@ -44,6 +44,15 @@ pub struct DownloadArgs {
     /// 关闭安全漏洞检查。
     #[arg(long, hide = true)]
     pub no_check_security: bool,
+
+    /// 下载前通过deps.dev检查许可证的商用风险。
+    /// 默认开启，使用 --no-check-license 可关闭。
+    #[arg(long, default_value_t = true, overrides_with = "no_check_license")]
+    pub check_license: bool,
+
+    /// 关闭许可证商用风险检查。
+    #[arg(long, hide = true)]
+    pub no_check_license: bool,
 }
 
 /// `import`子命令的参数。
@@ -70,4 +79,54 @@ pub struct ImportArgs {
     /// 如果为true，则覆盖现有工件（如果仓库策略禁止，可能会失败）。
     #[arg(long, default_value_t = false)]
     pub overwrite: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn download_checks_security_and_license_by_default() {
+        let cli = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "npm",
+            "--name",
+            "lodash",
+            "--version",
+            "4.17.21",
+        ])
+        .unwrap();
+
+        let Command::Download(args) = cli.command else {
+            panic!("expected download command");
+        };
+        assert!(args.check_security);
+        assert!(!args.no_check_security);
+        assert!(args.check_license);
+        assert!(!args.no_check_license);
+    }
+
+    #[test]
+    fn download_license_check_can_be_disabled() {
+        let cli = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "npm",
+            "--name",
+            "lodash",
+            "--version",
+            "4.17.21",
+            "--no-check-license",
+        ])
+        .unwrap();
+
+        let Command::Download(args) = cli.command else {
+            panic!("expected download command");
+        };
+        assert!(args.no_check_license);
+        assert!(!(args.check_license && !args.no_check_license));
+    }
 }
