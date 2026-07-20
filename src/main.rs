@@ -31,7 +31,12 @@ fn cmd_download(args: dep_porter::cli::DownloadArgs) -> Result<()> {
     if args.check_security && !args.no_check_security {
         match dep_porter::security::check_vulnerabilities(args.kind, &args.name, &args.version) {
             Ok(Some(findings)) if !findings.is_empty() => {
-                dep_porter::security::print_findings(args.kind, &args.name, &args.version, &findings);
+                dep_porter::security::print_findings(
+                    args.kind,
+                    &args.name,
+                    &args.version,
+                    &findings,
+                );
                 if !dep_porter::security::prompt_continue() {
                     info!("用户中止下载。");
                     return Ok(());
@@ -73,20 +78,22 @@ fn cmd_download(args: dep_porter::cli::DownloadArgs) -> Result<()> {
         }
     }
 
-    info!(
-        "正在下载 {} {}:{} ...",
-        args.kind, args.name, args.version
-    );
+    info!("正在下载 {} {}:{} ...", args.kind, args.name, args.version);
     info!("输出: {}", output_dir.display());
 
     std::fs::create_dir_all(&output_dir)?;
 
-    dep_porter::docker::run_downloader(&spec, &output_dir)?;
+    let cache_dir = if args.no_cache {
+        None
+    } else {
+        Some(
+            args.cache_dir
+                .unwrap_or_else(dep_porter::docker::default_cache_dir),
+        )
+    };
+    dep_porter::docker::run_downloader_with_cache(&spec, &output_dir, cache_dir.as_deref())?;
 
-    info!(
-        "下载完成: {}",
-        output_dir.display()
-    );
+    info!("下载完成: {}", output_dir.display());
 
     Ok(())
 }
@@ -102,7 +109,10 @@ fn cmd_import(args: dep_porter::cli::ImportArgs) -> Result<()> {
 
     info!(
         "正在从 {} 导入 {} {}:{} ...",
-        args.kind, args.name, args.version, download_dir.display()
+        args.kind,
+        args.name,
+        args.version,
+        download_dir.display()
     );
     info!("Nexus: {}", cfg.nexus.base_url);
     if args.overwrite {

@@ -63,10 +63,7 @@ fn import_maven(
 
     let ignored_files = discovered_files - files.len();
     if ignored_files > 0 {
-        info!(
-            "已忽略{}个校验、本地元数据或系统杂项文件",
-            ignored_files
-        );
+        info!("已忽略{}个校验、本地元数据或系统杂项文件", ignored_files);
     }
 
     if files.is_empty() {
@@ -78,10 +75,7 @@ fn import_maven(
     }
 
     let total_files = files.len();
-    info!(
-        "正在上传{}个文件（包括传递依赖项）",
-        total_files
-    );
+    info!("正在上传{}个文件（包括传递依赖项）", total_files);
 
     // 创建进度条
     let pb = ProgressBar::new(total_files as u64);
@@ -133,8 +127,7 @@ fn import_maven(
             }
         }
 
-        let content =
-            fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
+        let content = fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
         let resp = client
             .put(&url)
@@ -161,10 +154,7 @@ fn import_maven(
 
     info!(
         "Maven导入完成: 为{}:{}:{}上传了{}个文件",
-        coord.group_id,
-        coord.artifact_id,
-        spec.version,
-        total_files
+        coord.group_id, coord.artifact_id, spec.version, total_files
     );
     Ok(())
 }
@@ -285,17 +275,18 @@ fn import_npm(
 
     info!(
         "npm导入完成 {}@{}: 发布了{}个，跳过了{}个（共{}个tarball）",
-        spec.name,
-        spec.version,
-        published,
-        skipped,
-        total_files
+        spec.name, spec.version, published, skipped, total_files
     );
     Ok(())
 }
 
 /// 使用`twine upload`导入PyPI包。
-fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrite: bool) -> Result<()> {
+fn import_pypi(
+    spec: &DepSpec,
+    download_dir: &Path,
+    config: &AppConfig,
+    overwrite: bool,
+) -> Result<()> {
     // 先检查twine是否已安装
     if which::which("twine").is_err() {
         return Err(anyhow::anyhow!(
@@ -347,7 +338,14 @@ fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrit
 
         // 如果不覆盖，检查包是否已存在
         if !overwrite {
-            if pypi_package_exists(&client, &config, nexus_base, repo_name, &pkg_name, &pkg_version) {
+            if pypi_package_exists(
+                &client,
+                &config,
+                nexus_base,
+                repo_name,
+                &pkg_name,
+                &pkg_version,
+            ) {
                 info!("跳过（已存在）: {}=={}", pkg_name, pkg_version);
                 skipped += 1;
                 continue;
@@ -372,18 +370,19 @@ fn import_pypi(spec: &DepSpec, download_dir: &Path, config: &AppConfig, overwrit
             .context("执行twine失败")?;
 
         if !status.success() {
-            return Err(DepError::DockerCommandFailed(format!(
-                "上传{}失败: {}",
-                filename, status
-            ))
-            .into());
+            return Err(
+                DepError::DockerCommandFailed(format!("上传{}失败: {}", filename, status)).into(),
+            );
         }
         uploaded += 1;
     }
 
     info!(
         "PyPI导入完成 {}: 上传了{}个，跳过了{}个（共{}个包）",
-        spec.name, uploaded, skipped, package_files.len()
+        spec.name,
+        uploaded,
+        skipped,
+        package_files.len()
     );
     Ok(())
 }
@@ -398,10 +397,10 @@ fn parse_pypi_filename(filename: &str) -> (String, String) {
         //       charset_normalizer-3.4.7-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
         let without_ext = filename.trim_end_matches(".whl");
         let parts: Vec<&str> = without_ext.split('-').collect();
-        
+
         // python 标签列表
         let python_tags = ["py2", "py3", "cp2", "cp3", "pp2", "pp3", "jy", "IronPython"];
-        
+
         // 找到 python 标签的位置
         let mut python_tag_idx = None;
         for (i, part) in parts.iter().enumerate() {
@@ -417,7 +416,7 @@ fn parse_pypi_filename(filename: &str) -> (String, String) {
                 break;
             }
         }
-        
+
         if let Some(idx) = python_tag_idx {
             // python 标签之前的部分是包名和版本
             // 包名可能包含 '-'，所以需要从 python 标签往前推
@@ -429,7 +428,7 @@ fn parse_pypi_filename(filename: &str) -> (String, String) {
                 return (name, version.to_string());
             }
         }
-        
+
         // 如果找不到 python 标签，尝试通用方法
         // 假设最后三个部分是 python-abi-platform
         if parts.len() >= 4 {
@@ -466,7 +465,9 @@ fn pypi_package_exists(
     // 返回 HTML 格式，包含所有版本的链接
     let url = format!(
         "{}/repository/{}/simple/{}/",
-        nexus_base, repo_name, pkg_name.to_lowercase()
+        nexus_base,
+        repo_name,
+        pkg_name.to_lowercase()
     );
 
     if let Ok(resp) = client
@@ -507,21 +508,11 @@ fn import_cargo(
 
     if crates_dir.exists() {
         if let Some(cargo_repo) = &config.repositories.cargo {
-            info!(
-                "正在将crate发布到原生cargo仓库'{}'",
-                cargo_repo
-            );
+            info!("正在将crate发布到原生cargo仓库'{}'", cargo_repo);
             return publish_crates(&crates_dir, &index_dir, config, cargo_repo, overwrite)
-                .with_context(|| {
-                    format!(
-                        "将crate发布到cargo仓库'{}'失败",
-                        cargo_repo
-                    )
-                });
+                .with_context(|| format!("将crate发布到cargo仓库'{}'失败", cargo_repo));
         }
-        warn!(
-            "未配置[repositories] cargo；回退到原始上传（cargo无法使用）。"
-        );
+        warn!("未配置[repositories] cargo；回退到原始上传（cargo无法使用）。");
     } else {
         warn!("未找到crates/目录；回退到原始上传。");
     }
@@ -604,8 +595,7 @@ fn publish_crates(
             continue;
         }
 
-        let crate_bytes =
-            fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
+        let crate_bytes = fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
         let body = registry::build_cargo_publish_body(&meta, &crate_bytes)?;
 
         let resp = client
@@ -636,10 +626,7 @@ fn publish_crates(
 
     info!(
         "通过'{}'完成Cargo导入: 发布了{}个，跳过了{}个（共{}个crate）",
-        repo_name,
-        published,
-        skipped,
-        total_files
+        repo_name, published, skipped, total_files
     );
     Ok(())
 }
@@ -722,8 +709,7 @@ fn upload_files_to_repo(
             }
         }
 
-        let content =
-            fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
+        let content = fs::read(file).with_context(|| format!("读取{}失败", file.display()))?;
 
         let resp = client
             .put(&url)
@@ -834,7 +820,10 @@ mod tests {
 
     #[test]
     fn nexus_error_body_is_not_discarded() {
-        assert_eq!(response_body_details(" real Nexus reason \n".into()), "real Nexus reason");
+        assert_eq!(
+            response_body_details(" real Nexus reason \n".into()),
+            "real Nexus reason"
+        );
         assert_eq!(response_body_details(" \n".into()), "<响应正文为空>");
     }
 }

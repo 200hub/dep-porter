@@ -34,7 +34,7 @@ Each archive contains the `dep-porter` binary (or `dep-porter.exe` on Windows).
 
 ```bash
 # Download (internet-connected machine, requires Docker)
-dep-porter download --kind <kind> --name <name> --version <ver> [--no-check-security] [--no-check-license]
+dep-porter download --kind <kind> --name <name> --version <ver> [--cache-dir <dir>] [--no-cache] [--no-check-security] [--no-check-license]
 
 # Import (air-gapped machine, reads config.toml from cwd by default)
 dep-porter import --kind <kind> --name <name> --version <ver> [--overwrite]
@@ -58,6 +58,20 @@ NPM_MIRROR=https://registry.npmjs.org \
 PYPI_MIRROR=https://pypi.org/simple \
 CARGO_MIRROR=https://index.crates.io \
 dep-porter download --kind maven --name junit:junit --version 4.13.2
+```
+
+## Download cache
+
+**Enabled by default.** The default cache root is `.dep-porter-cache` in the current working directory. Every package manager uses one stable global per-ecosystem cache (for example `.dep-porter-cache/v3/maven`), so different package versions, root dependencies, mirrors, and downloader image revisions reuse existing artifacts.
+
+Maven resolves through the global cache into a fresh session repository and exports only that session, preventing historical artifacts from leaking into the bundle. The same host cache is mounted at both `/workspace/dep-cache` and Maven's native `/root/.m2/repository` path for compatibility with older downloader images.
+
+Configuration precedence: `--cache-dir` > `DEP_PORTER_CACHE_DIR` > `.dep-porter-cache`. Use `--no-cache` for a one-off uncached download.
+
+```bash
+dep-porter download --kind npm --name lodash --version 4.17.21 --cache-dir /data/dep-cache
+DEP_PORTER_CACHE_DIR=/data/dep-cache dep-porter download --kind npm --name lodash --version 4.17.21
+dep-porter download --kind npm --name lodash --version 4.17.21 --no-cache
 ```
 
 ## Dependency name format

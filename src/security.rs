@@ -91,10 +91,7 @@ pub fn check_vulnerabilities(
         .send()?;
 
     if !resp.status().is_success() {
-        anyhow::bail!(
-            "OSV.dev API returned HTTP {}",
-            resp.status()
-        );
+        anyhow::bail!("OSV.dev API returned HTTP {}", resp.status());
     }
 
     let osv: OsvResponse = resp.json()?;

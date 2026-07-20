@@ -40,18 +40,10 @@ pub struct RepositoryConfig {
 impl AppConfig {
     /// 从TOML文件加载配置。
     pub fn from_file(path: &Path) -> Result<Self> {
-        let content = std::fs::read_to_string(path).with_context(|| {
-            format!(
-                "无法读取配置文件'{}'。请确保文件存在。",
-                path.display()
-            )
-        })?;
-        let config: AppConfig = toml::from_str(&content).with_context(|| {
-            format!(
-                "解析配置文件'{}'失败。请检查TOML语法。",
-                path.display()
-            )
-        })?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("无法读取配置文件'{}'。请确保文件存在。", path.display()))?;
+        let config: AppConfig = toml::from_str(&content)
+            .with_context(|| format!("解析配置文件'{}'失败。请检查TOML语法。", path.display()))?;
         config.validate()?;
         Ok(config)
     }
@@ -59,46 +51,25 @@ impl AppConfig {
     /// 验证必填字段是否非空。
     pub fn validate(&self) -> Result<()> {
         if self.nexus.base_url.is_empty() {
-            return Err(DepError::ConfigError(
-                "[nexus] base_url is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[nexus] base_url is empty".into()).into());
         }
         if self.nexus.username.is_empty() {
-            return Err(DepError::ConfigError(
-                "[nexus] username is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[nexus] username is empty".into()).into());
         }
         if self.nexus.password.is_empty() {
-            return Err(DepError::ConfigError(
-                "[nexus] password is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[nexus] password is empty".into()).into());
         }
         if self.repositories.maven.is_empty() {
-            return Err(DepError::ConfigError(
-                "[repositories] maven is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[repositories] maven is empty".into()).into());
         }
         if self.repositories.npm.is_empty() {
-            return Err(DepError::ConfigError(
-                "[repositories] npm is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[repositories] npm is empty".into()).into());
         }
         if self.repositories.pypi.is_empty() {
-            return Err(DepError::ConfigError(
-                "[repositories] pypi is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[repositories] pypi is empty".into()).into());
         }
         if self.repositories.raw.is_empty() {
-            return Err(DepError::ConfigError(
-                "[repositories] raw is empty".into(),
-            )
-            .into());
+            return Err(DepError::ConfigError("[repositories] raw is empty".into()).into());
         }
         Ok(())
     }

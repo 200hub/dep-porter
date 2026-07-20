@@ -91,7 +91,11 @@ pub struct DepSpec {
 
 impl DepSpec {
     pub fn new(kind: DepKind, name: String, version: String) -> Self {
-        Self { kind, name, version }
+        Self {
+            kind,
+            name,
+            version,
+        }
     }
 }
 
@@ -101,9 +105,7 @@ pub enum DepError {
     #[error("不支持的依赖类型: {0}")]
     UnsupportedKind(String),
 
-    #[error(
-        "无效的Maven坐标'{0}'。预期格式: groupId:artifactId"
-    )]
+    #[error("无效的Maven坐标'{0}'。预期格式: groupId:artifactId")]
     InvalidMavenCoord(String),
 
     #[error("未找到下载目录: {0}")]

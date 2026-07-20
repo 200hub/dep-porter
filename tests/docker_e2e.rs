@@ -19,11 +19,9 @@ static INIT_LOGGER: Once = Once::new();
 
 fn init_logger() {
     INIT_LOGGER.call_once(|| {
-        let _ = env_logger::Builder::from_env(
-            env_logger::Env::default().default_filter_or("info"),
-        )
-        .is_test(true)
-        .try_init();
+        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .is_test(true)
+            .try_init();
     });
 }
 
@@ -63,9 +61,20 @@ fn download_dep(kind: DepKind, name: &str, version: &str, output_dir: &Path) {
 
 /// Assert that `dir` exists and contains at least one file.
 fn assert_dir_nonempty(dir: &Path, label: &str) {
-    assert!(dir.exists(), "{}: directory not found: {}", label, dir.display());
-    let files = collect_files(dir).unwrap_or_else(|e| panic!("{}: collect_files failed: {:#}", label, e));
-    assert!(!files.is_empty(), "{}: directory is empty: {}", label, dir.display());
+    assert!(
+        dir.exists(),
+        "{}: directory not found: {}",
+        label,
+        dir.display()
+    );
+    let files =
+        collect_files(dir).unwrap_or_else(|e| panic!("{}: collect_files failed: {:#}", label, e));
+    assert!(
+        !files.is_empty(),
+        "{}: directory is empty: {}",
+        label,
+        dir.display()
+    );
 }
 
 /// List all file paths relative to `base` for debug output.
@@ -73,7 +82,11 @@ fn list_files_relative(base: &Path) -> Vec<String> {
     collect_files_sorted(base)
         .unwrap_or_default()
         .iter()
-        .filter_map(|f| f.strip_prefix(base).ok().map(|p| p.to_string_lossy().to_string()))
+        .filter_map(|f| {
+            f.strip_prefix(base)
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        })
         .collect()
 }
 
@@ -283,12 +296,24 @@ fn docker_download_maven() {
     let files = list_files_relative(&repo);
     let has_jar = files.iter().any(|f| f.contains("junit-4.13.2.jar"));
     let has_pom = files.iter().any(|f| f.contains("junit-4.13.2.pom"));
-    assert!(has_jar, "Missing junit-4.13.2.jar in repository. Files:\n{:#?}", files);
-    assert!(has_pom, "Missing junit-4.13.2.pom in repository. Files:\n{:#?}", files);
+    assert!(
+        has_jar,
+        "Missing junit-4.13.2.jar in repository. Files:\n{:#?}",
+        files
+    );
+    assert!(
+        has_pom,
+        "Missing junit-4.13.2.pom in repository. Files:\n{:#?}",
+        files
+    );
 
     // Transitive dep: hamcrest-core should also be present
     let has_hamcrest = files.iter().any(|f| f.contains("hamcrest"));
-    assert!(has_hamcrest, "Missing transitive dep hamcrest-core. Files:\n{:#?}", files);
+    assert!(
+        has_hamcrest,
+        "Missing transitive dep hamcrest-core. Files:\n{:#?}",
+        files
+    );
 
     println!("  Maven download OK — {} files", files.len());
 }
@@ -401,7 +426,10 @@ fn docker_download_conan() {
         files
     );
 
-    println!("  Conan download OK — {} files (recipe cached)", files.len());
+    println!(
+        "  Conan download OK — {} files (recipe cached)",
+        files.len()
+    );
 }
 
 // ── 4. Directory naming integration test ──────────────────────────────────
@@ -424,14 +452,17 @@ fn docker_dir_name_matches_expected() {
 
     download_dep(kind, name, version, &expected_dir);
 
-    assert!(expected_dir.exists(), "Expected output dir: {}", expected_dir.display());
+    assert!(
+        expected_dir.exists(),
+        "Expected output dir: {}",
+        expected_dir.display()
+    );
     assert_dir_nonempty(&expected_dir, "maven output dir");
 
     // Verify the directory name matches the convention
     let dir_name = expected_dir.file_name().unwrap().to_str().unwrap();
     assert_eq!(
-        dir_name,
-        "maven_commons-io_commons-io_2.15.1",
+        dir_name, "maven_commons-io_commons-io_2.15.1",
         "Directory name mismatch"
     );
 
@@ -451,9 +482,14 @@ fn docker_unsupported_kind_fails_gracefully() {
     // Run the download script with an unsupported kind directly in the container
     let output = Command::new("docker")
         .args([
-            "run", "--rm",
+            "run",
+            "--rm",
             DOWNLOADER_IMAGE,
-            "dep-download", "gradle", "some:dep", "1.0.0", "/tmp/out",
+            "dep-download",
+            "gradle",
+            "some:dep",
+            "1.0.0",
+            "/tmp/out",
         ])
         .output()
         .expect("Failed to run docker");

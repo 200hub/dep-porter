@@ -49,8 +49,7 @@ pub fn cargo_sparse_index_path(name: &str) -> String {
 /// 索引将重命名存储在`name`中，将真实crate存储在`package`中，而发布期望真实crate在
 /// `name`中，重命名在`explicit_name_in_toml`中。
 pub fn cargo_index_to_publish_meta(index_line: &str) -> Result<Value> {
-    let idx: Value =
-        serde_json::from_str(index_line).context("解析crates.io索引行失败")?;
+    let idx: Value = serde_json::from_str(index_line).context("解析crates.io索引行失败")?;
 
     let name = idx
         .get("name")

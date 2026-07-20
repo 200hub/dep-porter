@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 /// 一个从互联网下载依赖项并将其导入到气隙隔离的Nexus仓库中的CLI工具。
@@ -53,6 +55,14 @@ pub struct DownloadArgs {
     /// 关闭许可证商用风险检查。
     #[arg(long, hide = true)]
     pub no_check_license: bool,
+
+    /// 下载缓存根目录。默认使用DEP_PORTER_CACHE_DIR或当前目录下的.dep-porter-cache。
+    #[arg(long, value_name = "DIR")]
+    pub cache_dir: Option<PathBuf>,
+
+    /// 关闭下载缓存。
+    #[arg(long, conflicts_with = "cache_dir")]
+    pub no_cache: bool,
 }
 
 /// `import`子命令的参数。
@@ -106,6 +116,8 @@ mod tests {
         assert!(!args.no_check_security);
         assert!(args.check_license);
         assert!(!args.no_check_license);
+        assert!(args.cache_dir.is_none());
+        assert!(!args.no_cache);
     }
 
     #[test]
@@ -128,5 +140,69 @@ mod tests {
         };
         assert!(args.no_check_license);
         assert!(!(args.check_license && !args.no_check_license));
+    }
+
+    #[test]
+    fn download_cache_can_be_configured() {
+        let cli = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "npm",
+            "--name",
+            "lodash",
+            "--version",
+            "4.17.21",
+            "--cache-dir",
+            "custom-cache",
+        ])
+        .unwrap();
+
+        let Command::Download(args) = cli.command else {
+            panic!("expected download command");
+        };
+        assert_eq!(args.cache_dir, Some(PathBuf::from("custom-cache")));
+        assert!(!args.no_cache);
+    }
+
+    #[test]
+    fn download_cache_can_be_disabled() {
+        let cli = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "npm",
+            "--name",
+            "lodash",
+            "--version",
+            "4.17.21",
+            "--no-cache",
+        ])
+        .unwrap();
+
+        let Command::Download(args) = cli.command else {
+            panic!("expected download command");
+        };
+        assert!(args.cache_dir.is_none());
+        assert!(args.no_cache);
+    }
+
+    #[test]
+    fn cache_directory_and_no_cache_are_mutually_exclusive() {
+        let result = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "npm",
+            "--name",
+            "lodash",
+            "--version",
+            "4.17.21",
+            "--cache-dir",
+            "custom-cache",
+            "--no-cache",
+        ]);
+
+        assert!(result.is_err());
     }
 }
