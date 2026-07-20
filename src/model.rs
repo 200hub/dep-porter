@@ -121,9 +121,31 @@ pub enum DepError {
     #[error("Docker命令失败: {0}")]
     DockerCommandFailed(String),
 
-    #[error("Nexus上传失败 {url}: HTTP {status}")]
-    NexusUploadFailed { url: String, status: u16 },
+    #[error("Nexus上传失败 {url}: HTTP {status}\nNexus响应: {details}")]
+    NexusUploadFailed {
+        url: String,
+        status: u16,
+        details: String,
+    },
 
     #[error("配置错误: {0}")]
     ConfigError(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DepError;
+
+    #[test]
+    fn nexus_upload_error_displays_response_details() {
+        let error = DepError::NexusUploadFailed {
+            url: "http://nexus/repository/maven/a.pom".into(),
+            status: 400,
+            details: "Repository version policy: RELEASE does not allow SNAPSHOT".into(),
+        };
+
+        let message = error.to_string();
+        assert!(message.contains("HTTP 400"));
+        assert!(message.contains("Repository version policy"));
+    }
 }

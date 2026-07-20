@@ -55,17 +55,27 @@ fn import_maven(
     }
 
     // 过滤掉Maven本地仓库的元数据文件（不是工件，Nexus会拒绝）
+    let discovered_files = files.len();
     let files: Vec<_> = files
         .into_iter()
-        .filter(|f| {
-            let name = f.file_name().unwrap_or_default().to_string_lossy();
-            // 过滤Maven本地仓库生成的元数据文件
-            name != "_remote.repositories"
-                && name != "resolver-status.properties"
-                && !name.starts_with("maven-metadata-")
-                && name != "maven-metadata.xml"
-        })
+        .filter(|f| is_maven_artifact_file(f))
         .collect();
+
+    let ignored_files = discovered_files - files.len();
+    if ignored_files > 0 {
+        info!(
+            "已忽略{}个由Maven/Nexus管理的校验或本地元数据文件",
+            ignored_files
+        );
+    }
+
+    if files.is_empty() {
+        return Err(DepError::DownloadDirEmpty(format!(
+            "{}（没有可上传的Maven工件）",
+            repo_dir.display()
+        ))
+        .into());
+    }
 
     let total_files = files.len();
     info!(
@@ -136,9 +146,11 @@ fn import_maven(
         let status = resp.status();
         if !status.is_success() {
             pb.finish_with_message("上传失败");
+            let details = nexus_response_details(resp);
             return Err(DepError::NexusUploadFailed {
                 url: url.clone(),
                 status: status.as_u16(),
+                details,
             }
             .into());
         }
@@ -259,8 +271,9 @@ fn import_npm(
             pb.finish_with_message("发布失败");
             let body = resp.text().unwrap_or_default();
             return Err(DepError::NexusUploadFailed {
-                url: format!("{} ({}@{}): {}", url, name, version, body.trim()),
+                url: format!("{} ({}@{})", url, name, version),
                 status: status.as_u16(),
+                details: response_body_details(body),
             }
             .into());
         }
@@ -609,8 +622,9 @@ fn publish_crates(
         if !status.is_success() || text.contains("\"errors\"") {
             pb.finish_with_message("发布失败");
             return Err(DepError::NexusUploadFailed {
-                url: format!("{} ({} {}): {}", publish_url, name, version, text.trim()),
+                url: format!("{} ({} {})", publish_url, name, version),
                 status: status.as_u16(),
+                details: response_body_details(text),
             }
             .into());
         }
@@ -722,9 +736,11 @@ fn upload_files_to_repo(
         let status = resp.status();
         if !status.is_success() {
             pb.finish_with_message("上传失败");
+            let details = nexus_response_details(resp);
             return Err(DepError::NexusUploadFailed {
                 url: url.clone(),
                 status: status.as_u16(),
+                details,
             }
             .into());
         }
@@ -734,6 +750,84 @@ fn upload_files_to_repo(
     pb.finish_with_message("完成");
 
     Ok(())
+}
+
+/// Maven和Nexus都会生成标准校验文件；直接上传这些旁文件会与Nexus在上传主工件时
+/// 自动生成的资产冲突，尤其会被禁止重复部署的仓库以HTTP 400拒绝。
+fn is_maven_artifact_file(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+
+    name != "_remote.repositories"
+        && name != "resolver-status.properties"
+        && name != "maven-metadata.xml"
+        && !name.starts_with("maven-metadata-")
+        && !name.ends_with(".lastupdated")
+        && ![".md5", ".sha1", ".sha256", ".sha512"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
+}
+
+/// 保留Nexus返回的诊断正文。即使正文无法解码或为空，也要明确说明，避免只留下
+/// 一个没有上下文的HTTP状态码。
+fn nexus_response_details(resp: reqwest::blocking::Response) -> String {
+    match resp.text() {
+        Ok(body) => response_body_details(body),
+        Err(err) => format!("无法读取响应正文: {}", err),
+    }
+}
+
+fn response_body_details(body: String) -> String {
+    let body = body.trim();
+    if body.is_empty() {
+        "<响应正文为空>".to_string()
+    } else {
+        body.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_maven_artifact_file, response_body_details};
+    use std::path::Path;
+
+    #[test]
+    fn maven_upload_excludes_checksums_and_local_metadata() {
+        for name in [
+            "guava-parent-26.0-android.pom.sha1",
+            "library.jar.md5",
+            "library.jar.sha256",
+            "library.jar.SHA512",
+            "library.jar.lastUpdated",
+            "_remote.repositories",
+            "resolver-status.properties",
+            "maven-metadata.xml",
+            "maven-metadata-central.xml.sha1",
+        ] {
+            assert!(!is_maven_artifact_file(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn maven_upload_keeps_real_artifacts_and_signatures() {
+        for name in [
+            "guava-parent-26.0-android.pom",
+            "guava-26.0-android.jar",
+            "guava-26.0-android-sources.jar",
+            "guava-26.0-android.pom.asc",
+        ] {
+            assert!(is_maven_artifact_file(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn nexus_error_body_is_not_discarded() {
+        assert_eq!(response_body_details(" real Nexus reason \n".into()), "real Nexus reason");
+        assert_eq!(response_body_details(" \n".into()), "<响应正文为空>");
+    }
 }
 
 /// 将文件导入到Nexus原始仓库，作为不支持类型的回退方案。
