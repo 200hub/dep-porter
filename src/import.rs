@@ -64,7 +64,7 @@ fn import_maven(
     let ignored_files = discovered_files - files.len();
     if ignored_files > 0 {
         info!(
-            "已忽略{}个由Maven/Nexus管理的校验或本地元数据文件",
+            "已忽略{}个校验、本地元数据或系统杂项文件",
             ignored_files
         );
     }
@@ -763,8 +763,13 @@ fn is_maven_artifact_file(path: &Path) -> bool {
 
     name != "_remote.repositories"
         && name != "resolver-status.properties"
+        && name != "thumbs.db"
+        && name != "desktop.ini"
         && name != "maven-metadata.xml"
         && !name.starts_with("maven-metadata-")
+        // Finder会在浏览或复制目录时生成.DS_Store和AppleDouble(._*)文件；
+        // 它们不是Maven工件，Maven格式仓库会拒绝这些路径。
+        && !name.starts_with('.')
         && !name.ends_with(".lastupdated")
         && ![".md5", ".sha1", ".sha256", ".sha512"]
             .iter()
@@ -806,6 +811,10 @@ mod tests {
             "resolver-status.properties",
             "maven-metadata.xml",
             "maven-metadata-central.xml.sha1",
+            ".DS_Store",
+            "._guava-26.0-android.jar",
+            "Thumbs.db",
+            "desktop.ini",
         ] {
             assert!(!is_maven_artifact_file(Path::new(name)), "{name}");
         }
