@@ -4,6 +4,7 @@ pub mod docker;
 pub mod import;
 pub mod license;
 pub mod model;
+pub mod pom;
 pub mod registry;
 pub mod security;
 pub mod util;

@@ -27,12 +27,19 @@ pub struct DownloadArgs {
 
     /// 依赖名称（例如Maven的`org.apache.commons:commons-lang3`，
     /// npm的`lodash`，PyPI的`requests`，Cargo的`serde`，Conan的`zlib`）。
-    #[arg(long)]
-    pub name: String,
+    /// 如果指定了 --from-pom，则此参数将被忽略。
+    #[arg(long, required_unless_present = "from_pom")]
+    pub name: Option<String>,
 
     /// 依赖版本（例如`3.14.0`、`4.17.21`）。
-    #[arg(long)]
-    pub version: String,
+    /// 如果指定了 --from-pom，则此参数将被忽略。
+    #[arg(long, required_unless_present = "from_pom")]
+    pub version: Option<String>,
+
+    /// 从 pom.xml 文件读取所有 Maven 依赖并下载。
+    /// 仅适用于 --kind maven。
+    #[arg(long, value_name = "POM_FILE")]
+    pub from_pom: Option<String>,
 
     /// 输出目录。默认为当前工作目录。
     #[arg(long, default_value = ".")]
@@ -118,6 +125,9 @@ mod tests {
         assert!(!args.no_check_license);
         assert!(args.cache_dir.is_none());
         assert!(!args.no_cache);
+        assert_eq!(args.name, Some("lodash".to_string()));
+        assert_eq!(args.version, Some("4.17.21".to_string()));
+        assert!(args.from_pom.is_none());
     }
 
     #[test]
@@ -140,6 +150,55 @@ mod tests {
         };
         assert!(args.no_check_license);
         assert!(!(args.check_license && !args.no_check_license));
+    }
+
+    #[test]
+    fn download_from_pom_requires_maven() {
+        let cli = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "maven",
+            "--from-pom",
+            "pom.xml",
+        ])
+        .unwrap();
+
+        let Command::Download(args) = cli.command else {
+            panic!("expected download command");
+        };
+        assert_eq!(args.from_pom, Some("pom.xml".to_string()));
+        assert!(args.name.is_none());
+        assert!(args.version.is_none());
+    }
+
+    #[test]
+    fn download_requires_name_and_version_or_from_pom() {
+        // 缺少 name 和 version，没有 from_pom
+        let result = Cli::try_parse_from(["dep-porter", "download", "--kind", "maven"]);
+        assert!(result.is_err());
+
+        // 有 name 但没有 version
+        let result = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "maven",
+            "--name",
+            "junit:junit",
+        ]);
+        assert!(result.is_err());
+
+        // 有 version 但没有 name
+        let result = Cli::try_parse_from([
+            "dep-porter",
+            "download",
+            "--kind",
+            "maven",
+            "--version",
+            "4.13.2",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]

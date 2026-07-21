@@ -76,6 +76,12 @@ dep-porter download --kind maven --name org.apache.commons:commons-lang3 --versi
 # Maven（SNAPSHOT 快照版本）
 dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.15.1-SNAPSHOT
 
+# Maven（从 pom.xml 文件批量下载所有依赖）
+dep-porter download --kind maven --from-pom pom.xml
+
+# Maven（从 pom.xml 下载，并自定义输出目录和缓存）
+dep-porter download --kind maven --from-pom pom.xml --output ./downloads --cache-dir ./cache
+
 # npm
 dep-porter download --kind npm --name @h-ai/serv --version 0.1.0-alpha.31
 
@@ -98,6 +104,62 @@ dep-porter download --kind npm --name lodash --version 4.17.21 --no-check-licens
 dep-porter download --kind npm --name lodash --version 4.17.21 --cache-dir D:\dep-cache
 dep-porter download --kind npm --name lodash --version 4.17.21 --no-cache
 ```
+
+#### 从 pom.xml 批量下载
+
+`--from-pom` 选项允许从 Maven 项目的 `pom.xml` 文件中读取所有依赖并批量下载：
+
+```bash
+# 基本用法
+dep-porter download --kind maven --from-pom pom.xml
+
+# 自定义输出目录
+dep-porter download --kind maven --from-pom pom.xml --output ./downloads
+
+# 使用自定义缓存目录
+dep-porter download --kind maven --from-pom pom.xml --cache-dir ./maven-cache
+
+# 关闭安全和许可证检查
+dep-porter download --kind maven --from-pom pom.xml --no-check-security --no-check-license
+```
+
+**功能特性：**
+
+- 自动解析 `pom.xml` 中的所有 `<dependency>` 标签
+- 自动过滤 `<scope>test</scope>` 的测试依赖
+- 对每个依赖执行完整的下载流程（包括传递依赖）
+- 支持安全漏洞和许可证检查（可选关闭）
+- 如果目录已存在则自动跳过，避免重复下载
+- 下载失败时继续处理其他依赖，最后汇总结果
+
+**pom.xml 示例：**
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <version>2.7.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-lang3</artifactId>
+      <version>3.14.0</version>
+    </dependency>
+    <!-- test scope 依赖会被自动过滤 -->
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
+```
+
+完整示例请参考项目根目录的 `pom.example.xml` 文件。
 
 每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
 
