@@ -203,6 +203,49 @@ dep-porter import --kind maven --name junit:junit --version 4.13.2 --overwrite
 
 > `--config` 默认读取当前目录的 `config.toml`，可省略。如需指定其他路径：`--config /path/to/config.toml`
 
+### 批量：基于依赖文件一次性搬运
+
+在单依赖 `download` / `import` 之上封装了一层批量能力，直接读取主流打包工具的**依赖清单或锁定文件**，解析出直接依赖后一次性完成风险确认、下载与导入。底层完全复用上文的单依赖流程，行为一致。
+
+支持的文件（按文件名自动识别）：
+
+| 文件                | 生态  | 解析内容                                                     |
+| ------------------- | ----- | ----------------------------------------------------------- |
+| `pom.xml`           | maven | `<dependencies>` 直接依赖（支持 `${property}` 替换）        |
+| `package.json`      | npm   | `dependencies`（`--include-dev` 时含 `devDependencies`）    |
+| `package-lock.json` | npm   | 锁定文件，解析为精确版本的完整依赖集                        |
+| `requirements.txt`  | pypi  | `name==version` 固定版本行                                  |
+| `Cargo.toml`        | cargo | `[dependencies]`（`--include-dev` 时含 dev/build）          |
+| `Cargo.lock`        | cargo | 锁定文件，解析 crates.io 来源的精确版本依赖集               |
+| `conanfile.txt`     | conan | `[requires]` 段                                             |
+
+> 清单文件（pom.xml、package.json、Cargo.toml 等）提取“直接依赖”，随后下载器会自动递归拉取其传递依赖。锁定文件版本已固定，直接解析为完整的已解析依赖集。带版本范围（如 `^1.2.3`、`>=1.0`、`*`）而无法确定唯一精确版本的条目会被跳过并给出提示，建议改用对应的 lock 文件。
+
+**外网批量下载**（联网机器）：解析文件 → 一次性检查全部直接依赖的安全 / 许可证风险并统一确认 → 逐个下载到 `--output` 下的 `{类型}_{名称}_{版本}/` 子目录。
+
+```bash
+# 从 pom.xml 批量下载
+dep-porter batch-download --file pom.xml
+
+# 从 package-lock.json 批量下载（精确版本），输出到指定目录
+dep-porter batch-download --file package-lock.json --output ./out
+
+# 一并处理开发依赖，并关闭风险检查
+dep-porter batch-download --file Cargo.toml --include-dev --no-check-security --no-check-license
+```
+
+**内网批量导入**：读取同一个依赖文件，从 `--input` 下对应的下载目录逐个导入到 Nexus。参数应与下载时保持一致（同一个 `--file`，`--include-dev` 一致，`--input` 指向下载时的 `--output`）。
+
+```bash
+# 从 pom.xml 批量导入（下载目录在当前目录）
+dep-porter batch-import --file pom.xml --config config.toml
+
+# 指定下载目录基准路径与覆盖模式
+dep-porter batch-import --file package-lock.json --input ./out --overwrite
+```
+
+> 批量过程中单个依赖失败不会中断整体流程，会继续处理其余依赖，并在结束时以非零退出码汇总失败项。
+
 ### Nexus 仓库配置
 
 导入前需要在 Nexus 创建以下仓库：
