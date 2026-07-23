@@ -10,6 +10,25 @@ use crate::model::{DepError, DepKind, DepSpec, MavenCoordinate};
 use crate::registry;
 use crate::util::{collect_files_sorted, relative_path};
 
+/// 记录单个包/文件导入失败的信息。
+struct ImportFailure {
+    name: String,
+    status: u16,
+    details: String,
+}
+
+/// 汇总报告导入失败的包，返回格式化的错误信息。
+fn report_failures(kind: &str, failures: &[ImportFailure], published: u32, skipped: u32, total: usize) -> String {
+    let mut msg = format!(
+        "{}导入部分失败: 成功{}个，跳过{}个，失败{}个（共{}个）\n失败详情:",
+        kind, published, skipped, failures.len(), total
+    );
+    for f in failures {
+        msg.push_str(&format!("\n  - {} (HTTP {}): {}", f.name, f.status, f.details));
+    }
+    msg
+}
+
 /// 将下载的依赖项导入到Nexus仓库。
 pub fn import_to_nexus(
     spec: &DepSpec,
@@ -89,6 +108,9 @@ fn import_maven(
 
     let client = reqwest::blocking::Client::new();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
+    let mut published = 0u32;
+    let mut skipped = 0u32;
+    let mut failures: Vec<ImportFailure> = vec![];
 
     // SNAPSHOT版本的传递依赖项（非SNAPSHOT）应该上传到maven仓库，而不是maven-snapshots
     let snapshot_repo = config
@@ -121,6 +143,7 @@ fn import_maven(
                 .send();
             if let Ok(resp) = head {
                 if resp.status().is_success() {
+                    skipped += 1;
                     pb.inc(1);
                     continue;
                 }
@@ -138,24 +161,36 @@ fn import_maven(
 
         let status = resp.status();
         if !status.is_success() {
-            pb.finish_with_message("上传失败");
             let details = nexus_response_details(resp);
-            return Err(DepError::NexusUploadFailed {
-                url: url.clone(),
+            warn!("上传失败 {}: HTTP {}", full_rel, status);
+            failures.push(ImportFailure {
+                name: full_rel.clone(),
                 status: status.as_u16(),
                 details,
-            }
-            .into());
+            });
+            pb.inc(1);
+            continue;
         }
+        published += 1;
         pb.inc(1);
     }
 
-    pb.finish_with_message("完成");
+    if failures.is_empty() {
+        pb.finish_with_message("完成");
+    } else {
+        pb.finish_with_message(format!("完成（{}个失败）", failures.len()));
+    }
 
     info!(
-        "Maven导入完成: 为{}:{}:{}上传了{}个文件",
-        coord.group_id, coord.artifact_id, spec.version, total_files
+        "Maven导入完成 {}:{}:{}: 发布了{}个，跳过了{}个，失败了{}个（共{}个文件）",
+        coord.group_id, coord.artifact_id, spec.version, published, skipped, failures.len(), total_files
     );
+
+    if !failures.is_empty() {
+        return Err(anyhow::anyhow!(
+            report_failures("Maven", &failures, published, skipped, total_files)
+        ));
+    }
     Ok(())
 }
 
@@ -199,6 +234,7 @@ fn import_npm(
     let client = reqwest::blocking::Client::new();
     let mut published = 0u32;
     let mut skipped = 0u32;
+    let mut failures: Vec<ImportFailure> = vec![];
 
     // 创建进度条
     let pb = ProgressBar::new(total_files as u64);
@@ -258,25 +294,37 @@ fn import_npm(
 
         let status = resp.status();
         if !status.is_success() {
-            pb.finish_with_message("发布失败");
             let body = resp.text().unwrap_or_default();
-            return Err(DepError::NexusUploadFailed {
-                url: format!("{} ({}@{})", url, name, version),
+            let pkg_id = format!("{}@{}", name, version);
+            warn!("发布失败 {}: HTTP {}", pkg_id, status);
+            failures.push(ImportFailure {
+                name: pkg_id,
                 status: status.as_u16(),
                 details: response_body_details(body),
-            }
-            .into());
+            });
+            pb.inc(1);
+            continue;
         }
         published += 1;
         pb.inc(1);
     }
 
-    pb.finish_with_message("完成");
+    if failures.is_empty() {
+        pb.finish_with_message("完成");
+    } else {
+        pb.finish_with_message(format!("完成（{}个失败）", failures.len()));
+    }
 
     info!(
-        "npm导入完成 {}@{}: 发布了{}个，跳过了{}个（共{}个tarball）",
-        spec.name, spec.version, published, skipped, total_files
+        "npm导入完成 {}@{}: 发布了{}个，跳过了{}个，失败了{}个（共{}个tarball）",
+        spec.name, spec.version, published, skipped, failures.len(), total_files
     );
+
+    if !failures.is_empty() {
+        return Err(anyhow::anyhow!(
+            report_failures("npm", &failures, published, skipped, total_files)
+        ));
+    }
     Ok(())
 }
 
@@ -549,6 +597,7 @@ fn publish_crates(
     let client = reqwest::blocking::Client::new();
     let mut published = 0u32;
     let mut skipped = 0u32;
+    let mut failures: Vec<ImportFailure> = vec![];
 
     // 创建进度条
     let pb = ProgressBar::new(total_files as u64);
@@ -610,24 +659,36 @@ fn publish_crates(
         let text = resp.text().unwrap_or_default();
         // Cargo API在逻辑失败时返回200状态码和一个`errors`数组。
         if !status.is_success() || text.contains("\"errors\"") {
-            pb.finish_with_message("发布失败");
-            return Err(DepError::NexusUploadFailed {
-                url: format!("{} ({} {})", publish_url, name, version),
+            let crate_id = format!("{} {}", name, version);
+            warn!("发布失败 {}: HTTP {}", crate_id, status);
+            failures.push(ImportFailure {
+                name: crate_id,
                 status: status.as_u16(),
                 details: response_body_details(text),
-            }
-            .into());
+            });
+            pb.inc(1);
+            continue;
         }
         published += 1;
         pb.inc(1);
     }
 
-    pb.finish_with_message("完成");
+    if failures.is_empty() {
+        pb.finish_with_message("完成");
+    } else {
+        pb.finish_with_message(format!("完成（{}个失败）", failures.len()));
+    }
 
     info!(
-        "通过'{}'完成Cargo导入: 发布了{}个，跳过了{}个（共{}个crate）",
-        repo_name, published, skipped, total_files
+        "通过'{}'完成Cargo导入: 发布了{}个，跳过了{}个，失败了{}个（共{}个crate）",
+        repo_name, published, skipped, failures.len(), total_files
     );
+
+    if !failures.is_empty() {
+        return Err(anyhow::anyhow!(
+            report_failures("Cargo", &failures, published, skipped, total_files)
+        ));
+    }
     Ok(())
 }
 
@@ -674,6 +735,9 @@ fn upload_files_to_repo(
     let total_files = files.len();
     let nexus_base = config.nexus.base_url.trim_end_matches('/');
     let client = reqwest::blocking::Client::new();
+    let mut published = 0u32;
+    let mut skipped = 0u32;
+    let mut failures: Vec<ImportFailure> = vec![];
 
     // 创建进度条
     let pb = ProgressBar::new(total_files as u64);
@@ -703,6 +767,7 @@ fn upload_files_to_repo(
                 .send();
             if let Ok(resp) = head {
                 if resp.status().is_success() {
+                    skipped += 1;
                     pb.inc(1);
                     continue;
                 }
@@ -721,20 +786,36 @@ fn upload_files_to_repo(
 
         let status = resp.status();
         if !status.is_success() {
-            pb.finish_with_message("上传失败");
             let details = nexus_response_details(resp);
-            return Err(DepError::NexusUploadFailed {
-                url: url.clone(),
+            warn!("上传失败 {}: HTTP {}", rel, status);
+            failures.push(ImportFailure {
+                name: rel.clone(),
                 status: status.as_u16(),
                 details,
-            }
-            .into());
+            });
+            pb.inc(1);
+            continue;
         }
+        published += 1;
         pb.inc(1);
     }
 
-    pb.finish_with_message("完成");
+    if failures.is_empty() {
+        pb.finish_with_message("完成");
+    } else {
+        pb.finish_with_message(format!("完成（{}个失败）", failures.len()));
+    }
 
+    info!(
+        "{}导入完成 {}@{}: 发布了{}个，跳过了{}个，失败了{}个（共{}个文件）",
+        kind_prefix, spec.name, spec.version, published, skipped, failures.len(), total_files
+    );
+
+    if !failures.is_empty() {
+        return Err(anyhow::anyhow!(
+            report_failures(kind_prefix, &failures, published, skipped, total_files)
+        ));
+    }
     Ok(())
 }
 
@@ -844,11 +925,5 @@ fn import_raw(
         repo_name,
         kind_prefix,
         overwrite,
-    )?;
-
-    info!(
-        "{}导入完成 {}@{}（通过原始仓库'{}'）",
-        kind_prefix, spec.name, spec.version, repo_name
-    );
-    Ok(())
+    )
 }
