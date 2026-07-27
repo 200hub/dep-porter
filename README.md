@@ -69,6 +69,8 @@ Expand-Archive dep-porter-windows-amd64.zip
 
 下载时会自动拉取 Docker 镜像 `gudaoxuri/dep-downloader:latest`。
 
+#### 方式一：单个依赖下载
+
 ```bash
 # Maven（正式版本）
 dep-porter download --kind maven --name org.apache.commons:commons-lang3 --version 3.14.0
@@ -99,7 +101,145 @@ dep-porter download --kind npm --name lodash --version 4.17.21 --cache-dir D:\de
 dep-porter download --kind npm --name lodash --version 4.17.21 --no-cache
 ```
 
-每个命令生成一个目录：`{类型}_{安全名称}_{版本}/`，包含所有下载的依赖及其传递依赖。导入时整个目录的所有依赖（包括传递依赖）都会上传到 Nexus。
+#### 方式二：从依赖文件批量下载（推荐）⭐
+
+使用 `batch-download` 命令从项目的依赖文件中读取所有直接依赖并批量下载：
+
+```bash
+# Maven: 从 pom.xml 批量下载
+dep-porter batch-download --file pom.xml
+
+# npm: 从 package.json 或 package-lock.json 批量下载
+dep-porter batch-download --file package.json
+dep-porter batch-download --file package-lock.json  # 推荐：精确版本
+
+# PyPI: 从 requirements.txt 批量下载
+dep-porter batch-download --file requirements.txt
+
+# Cargo: 从 Cargo.toml 或 Cargo.lock 批量下载
+dep-porter batch-download --file Cargo.toml
+dep-porter batch-download --file Cargo.lock  # 推荐：精确版本
+
+# Conan: 从 conanfile.txt 批量下载
+dep-porter batch-download --file conanfile.txt
+
+# 自定义输出目录
+dep-porter batch-download --file pom.xml --output ./downloads
+
+# 包含开发/测试依赖
+dep-porter batch-download --file package.json --include-dev
+
+# 关闭安全和许可证检查（加速下载）
+dep-porter batch-download --file pom.xml --no-check-security --no-check-license
+
+# 使用自定义缓存目录
+dep-porter batch-download --file Cargo.lock --cache-dir ./cargo-cache
+```
+
+**支持的依赖文件：**
+
+| 文件类型 | 生态系统 | 说明 |
+|---------|---------|------|
+| `pom.xml` | Maven | 解析 `<dependencies>`，自动过滤 `test` scope |
+| `package.json` | npm | 解析 `dependencies`（可选 `devDependencies`） |
+| `package-lock.json` ⭐ | npm | **推荐**：锁定文件，精确版本，包含完整依赖树 |
+| `requirements.txt` | PyPI | 仅支持 `name==version` 固定版本格式 |
+| `Cargo.toml` | Cargo | 解析 `[dependencies]`（可选 dev/build） |
+| `Cargo.lock` ⭐ | Cargo | **推荐**：锁定文件，精确版本，包含完整依赖树 |
+| `conanfile.txt` | Conan | 解析 `[requires]` 段 |
+
+**批量下载优势：**
+
+✅ 一个命令下载项目所有依赖  
+✅ 自动识别文件类型  
+✅ 统一的安全和许可证检查  
+✅ 支持属性替换（Maven `${properties}`）  
+✅ 自动过滤测试依赖  
+✅ 失败容错：单个失败不影响其他依赖  
+✅ 详细的进度和结果汇总  
+
+**依赖文件示例：**
+
+<details>
+<summary>pom.xml（Maven）</summary>
+
+```xml
+<project>
+  <properties>
+    <spring.version>2.7.0</spring.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+      <version>${spring.version}</version>
+    </dependency>
+    <!-- test scope 会被自动过滤 -->
+    <dependency>
+      <groupId>junit</groupId>
+      <artifactId>junit</artifactId>
+      <version>4.13.2</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+</project>
+```
+</details>
+
+<details>
+<summary>package.json（npm）</summary>
+
+```json
+{
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "express": "~4.18.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  }
+}
+```
+</details>
+
+<details>
+<summary>requirements.txt（PyPI）</summary>
+
+```
+requests==2.32.3
+flask==3.0.0
+django==5.0.1
+# 注释会被忽略
+```
+</details>
+
+<details>
+<summary>Cargo.toml（Rust）</summary>
+
+```toml
+[dependencies]
+serde = "1.0.203"
+tokio = { version = "1.35.0", features = ["full"] }
+
+[dev-dependencies]
+tempfile = "3.10.0"
+```
+</details>
+
+<details>
+<summary>conanfile.txt（Conan）</summary>
+
+```ini
+[requires]
+zlib/1.2.13
+boost/1.80.0
+
+[generators]
+CMakeToolchain
+```
+</details>
+
+每个依赖生成独立目录：`{类型}_{安全名称}_{版本}/`，包含该依赖及其所有传递依赖。
 
 #### 镜像源配置
 
@@ -180,7 +320,7 @@ pypi = "pypi-hosted"
 raw = "raw-hosted"
 ```
 
-执行导入：
+#### 方式一：单个依赖导入
 
 ```bash
 # Maven 正式版本 → 发到 maven 仓库
@@ -203,11 +343,60 @@ dep-porter import --kind maven --name junit:junit --version 4.13.2 --overwrite
 
 > `--config` 默认读取当前目录的 `config.toml`，可省略。如需指定其他路径：`--config /path/to/config.toml`
 
-### 批量：基于依赖文件一次性搬运
+#### 方式二：从依赖文件批量导入（推荐）⭐
 
-在单依赖 `download` / `import` 之上封装了一层批量能力，直接读取主流打包工具的**依赖清单或锁定文件**，解析出直接依赖后一次性完成风险确认、下载与导入。底层完全复用上文的单依赖流程，行为一致。
+使用 `batch-import` 命令从依赖文件批量导入所有已下载的依赖：
 
-支持的文件（按文件名自动识别）：
+```bash
+# Maven: 从 pom.xml 批量导入
+dep-porter batch-import --file pom.xml
+
+# npm: 从 package-lock.json 批量导入
+dep-porter batch-import --file package-lock.json
+
+# PyPI: 从 requirements.txt 批量导入
+dep-porter batch-import --file requirements.txt
+
+# Cargo: 从 Cargo.lock 批量导入
+dep-porter batch-import --file Cargo.lock
+
+# Conan: 从 conanfile.txt 批量导入
+dep-porter batch-import --file conanfile.txt
+
+# 自定义下载目录位置（需与 batch-download 的 --output 一致）
+dep-porter batch-import --file pom.xml --input ./downloads
+
+# 包含开发/测试依赖（需与 batch-download 的 --include-dev 一致）
+dep-porter batch-import --file package.json --include-dev
+
+# 覆盖模式（已存在的制品会被覆盖）
+dep-porter batch-import --file pom.xml --overwrite
+
+# 使用自定义配置文件
+dep-porter batch-import --file Cargo.lock --config /path/to/config.toml
+```
+
+**批量导入说明：**
+
+- ✅ 自动识别依赖文件类型
+- ✅ 解析所有直接依赖并逐个导入
+- ✅ 失败容错：单个失败不影响其他依赖
+- ✅ 详细的进度和结果汇总
+- ⚠️ **确保依赖文件与下载时使用的文件一致**
+- ⚠️ **确保 `--input` 目录与下载时的 `--output` 目录一致**
+- ⚠️ **确保 `--include-dev` 与下载时的设置一致**
+
+**完整流程示例：**
+
+```bash
+# 外网机器：批量下载
+dep-porter batch-download --file pom.xml --output ./downloads
+
+# 拷贝到内网：dep-porter 二进制、downloads/ 目录、pom.xml、config.toml
+
+# 内网机器：批量导入
+dep-porter batch-import --file pom.xml --input ./downloads --config config.toml
+```
 
 | 文件                | 生态  | 解析内容                                                     |
 | ------------------- | ----- | ----------------------------------------------------------- |

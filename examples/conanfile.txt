@@ -1,0 +1,23 @@
+# Conan 依赖示例 - conanfile.txt
+# 演示 dep-porter 的批量下载功能
+
+[requires]
+# 压缩库
+zlib/1.2.13
+
+# Boost 库
+boost/1.80.0
+
+# OpenSSL
+openssl/3.2.0
+
+# JSON 库
+nlohmann_json/3.11.3
+
+[generators]
+CMakeToolchain
+CMakeDeps
+
+[options]
+boost:shared=False
+openssl:shared=True
