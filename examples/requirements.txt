@@ -1,0 +1,24 @@
+# Python 依赖示例 - requirements.txt
+# 演示 dep-porter 的批量下载功能
+
+# Web 框架
+flask==3.0.0
+django==5.0.1
+
+# HTTP 库
+requests==2.32.3
+urllib3==2.1.0
+
+# 数据处理
+pandas==2.1.4
+numpy==1.26.2
+
+# 配置管理
+python-dotenv==1.0.0
+
+# 注释和空行会被忽略
+
+# 仅支持 == 固定版本格式
+# 以下格式会被跳过：
+# flask>=3.0.0  # 不支持范围版本
+# requests       # 不支持无版本号
